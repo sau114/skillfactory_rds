@@ -1,6 +1,3 @@
-# skillfactory_rds
-SkillFactory Data Science projects
-
 # skillfactory_rds / module_1
 Задача проекта: Найти ответы на 27 поставленных задач.
 
