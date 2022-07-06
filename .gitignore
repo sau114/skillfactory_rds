@@ -9,5 +9,6 @@ module_5/train_df_full_part1.csv.zip
 module_5/catboost_info/
 module_9/.ipynb_checkpoints/
 module_9/img/
-module_9/train_preprocessed.csv
-module_9/test_preprocessed.csv
+module_9/*.csv
+module_9/catboost_info/
+module_9/*.cbm
