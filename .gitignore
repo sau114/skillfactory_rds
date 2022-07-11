@@ -12,3 +12,4 @@ module_9/img/
 module_9/*.csv
 module_9/catboost_info/
 module_9/*.cbm
+module_9/*.hdf5
