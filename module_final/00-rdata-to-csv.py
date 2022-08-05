@@ -28,21 +28,19 @@ import pyreadr
 
 
 # check memory usage
-import os
-import gc
 import psutil
 
 
 # In[4]:
 
 
-DIR = 'E:\Datasets\TEP\dataverse'  # dataset source dir
+DIR = 'E:\\Datasets\\TEP\\dataverse'  # dataset source dir
 R_FILES = ('TEP_FaultFree_Training.RData',  # datasets RData, sorted by size
            'TEP_FaultFree_Testing.RData',
            'TEP_Faulty_Training.RData',
            'TEP_Faulty_Testing.RData',
            )
-DTYPES_FILE = 'dtypes.json'  # dtypes of columns
+DTYPES_FILE = 'dtypes.json'  # dtypes_ of columns
 
 
 # In[5]:
@@ -68,7 +66,7 @@ def optimize_dtypes(df: pd.DataFrame) -> None:
     df[uint_columns] = df[uint_columns].apply(pd.to_numeric, downcast='unsigned')
     df[float_columns] = df[float_columns].apply(pd.to_numeric, downcast='float')
     
-    # saving our dtypes description for further use
+    # saving our dtypes_ description for further use
     dtypes_file = os.path.join(DIR, DTYPES_FILE)
     if not os.path.isfile(dtypes_file):
         # we need to create it
@@ -92,12 +90,12 @@ def split_n_save(df: pd.DataFrame, subdir: str) -> None:
     for flt in df['faultNumber'].unique():
         for run in df['simulationRun'].unique():
             sub_df = (df.query(f'faultNumber == {flt} and simulationRun == {run}')
-                        .drop(columns=['faultNumber', 'simulationRun'])
+                        .drop(columns=['simulationRun'])
                         .set_index('sample')
                      )
-            fname = os.path.join(outdir, f'{subdir}_run_{run}_fault_{flt}.csv')
+            fname = os.path.join(outdir, f'{subdir}_run_{run:03d}_fault_{flt:03d}.csv')
             sub_df.to_csv(fname)
-    
+
     return
 
 
@@ -118,7 +116,7 @@ for f in R_FILES:
         print_memusage('After optimizing')
         
         split_n_save(r_data[k], k)
-        print_memusage("After split\'n\'saving")
+        print_memusage("After split'n'saving")
         
     del r_data  # because need a lot of RAM
     print_memusage('After deleting')
