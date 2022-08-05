@@ -1,6 +1,10 @@
-# skillfactory_rds / module_final
+## skillfactory_rds / module_final
 
 Topic: Anomaly detection for multi-sensor industrial process.
+
+Target:
+
+Content:
 
 Datasets:
 1. GHL - Gasoil Heating Loop
@@ -9,10 +13,4 @@ Datasets:
 	- Harvard Dataverse: [Source](https://doi.org/10.7910/DVN/6C3JR1) and [some information](https://depts.washington.edu/control/LARRY/TE/download.html)
 	- Kaspersky Lab: [Source](https://kas.pr/ics-research/dataset_tep_59) and [sci-paper](https://arxiv.org/abs/1709.02232)
 
-Задача проекта: Этап согласования.
-
-План действий по проекту:
-
-Как устроен проект:
-
-Выводы по работе:
+Conclusions:
