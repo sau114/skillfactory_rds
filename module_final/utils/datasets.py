@@ -12,7 +12,7 @@ class DatasetError(ValueError):
     pass
 
 
-class GhlKaslabDataset:
+class GhlKasperskyDataset:
     # GHL dataset from Kaspersky Lab
 
     def __init__(self,
@@ -254,7 +254,7 @@ class TepHarvardDataset:
 
 
 if __name__ == '__main__':
-    dataset = GhlKaslabDataset()
+    dataset = GhlKasperskyDataset()
     # dataset = TepHarvardDataset()
     print(dataset)
 
