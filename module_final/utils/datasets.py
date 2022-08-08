@@ -100,7 +100,7 @@ class GhlKasperskyDataset:
                                  index_col='time',
                                  )
             series= series.head(round(series.shape[0] * self._train_size))
-            anomaly = series['attack'].max()
+            anomaly = series['attack'].rename('anomaly')
             series.drop(columns=['attack'], inplace=True)
             yield (series, anomaly)
 
@@ -113,7 +113,7 @@ class GhlKasperskyDataset:
                                  index_col='time',
                                  )
             series= series.tail(series.shape[0] - round(series.shape[0] * self._train_size))
-            anomaly = series['attack'].max()
+            anomaly = series['attack'].rename('anomaly')
             series.drop(columns=['attack'], inplace=True)
             yield (series, anomaly)
 
@@ -125,7 +125,7 @@ class GhlKasperskyDataset:
                                  dtype=self._dtypes,
                                  index_col='time',
                                  )
-            anomaly = series['attack'].max()
+            anomaly = series['attack'].rename('anomaly')
             series.drop(columns=['attack'], inplace=True)
             yield (series, anomaly)
 
@@ -224,7 +224,7 @@ class TepHarvardDataset:
                                  dtype=self._dtypes,
                                  index_col='sample',
                                  )
-            anomaly = series['faultNumber'].max()
+            anomaly = series['faultNumber'].rename('anomaly')
             series.drop(columns=['faultNumber'], inplace=True)
             yield (series, anomaly)
 
@@ -236,7 +236,7 @@ class TepHarvardDataset:
                                  dtype=self._dtypes,
                                  index_col='sample',
                                  )
-            anomaly = series['faultNumber'].max()
+            anomaly = series['faultNumber'].rename('anomaly')
             series.drop(columns=['faultNumber'], inplace=True)
             yield (series, anomaly)
 
@@ -248,7 +248,7 @@ class TepHarvardDataset:
                                  dtype=self._dtypes,
                                  index_col='sample',
                                  )
-            anomaly = series['faultNumber'].max()
+            anomaly = series['faultNumber'].rename('anomaly')
             series.drop(columns=['faultNumber'], inplace=True)
             yield (series, anomaly)
 
@@ -265,12 +265,12 @@ if __name__ == '__main__':
 
     gen = dataset.train_series_generator()
     for series, anomaly in gen:
-        print('train yield:', series.shape, anomaly, dataset._gen_filename)
+        print('train yield:', series.shape, anomaly.shape, dataset._gen_filename)
 
     gen = dataset.valid_series_generator()
     for series, anomaly in gen:
-        print('valid yield:', series.shape, anomaly, dataset._gen_filename)
+        print('valid yield:', series.shape, anomaly.shape, dataset._gen_filename)
 
     gen = dataset.test_series_generator()
     for series, anomaly in gen:
-        print('test yield:', series.shape, anomaly, dataset._gen_filename)
+        print('test yield:', series.shape, anomaly.shape, dataset._gen_filename)
