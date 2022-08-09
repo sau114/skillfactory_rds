@@ -225,6 +225,8 @@ class TepHarvardDataset:
                                  index_col='sample',
                                  )
             anomaly = series['faultNumber'].rename('anomaly')
+            # for train, anomaly start from 1 h (20 * 3 min) till end
+            anomaly.iloc[0:20] = 0
             series.drop(columns=['faultNumber'], inplace=True)
             yield (series, anomaly)
 
@@ -237,6 +239,8 @@ class TepHarvardDataset:
                                  index_col='sample',
                                  )
             anomaly = series['faultNumber'].rename('anomaly')
+            # for train, anomaly start from 1 h (20 * 3 min) till end
+            anomaly.iloc[0:20] = 0
             series.drop(columns=['faultNumber'], inplace=True)
             yield (series, anomaly)
 
@@ -249,6 +253,8 @@ class TepHarvardDataset:
                                  index_col='sample',
                                  )
             anomaly = series['faultNumber'].rename('anomaly')
+            # for test, anomaly start from 8 h (160 * 3 min) till end
+            anomaly.iloc[0:20] = 0
             series.drop(columns=['faultNumber'], inplace=True)
             yield (series, anomaly)
 

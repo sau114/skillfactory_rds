@@ -21,3 +21,4 @@ module_9/*.hdf5
 module_final/.idea/
 module_final/.ipynb_checkpoints/
 module_final/venv/
+*.pyc
