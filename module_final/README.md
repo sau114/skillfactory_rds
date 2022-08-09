@@ -1,8 +1,8 @@
 ## skillfactory_rds / module_final
 
-*Topic*: Anomaly detection for multi-sensor industrial process.
+*Topic*: Anomaly detection for industrial process.
 
-*Target*:
+*Target*: Explore various methods of online anomaly detection for industrial production processes. Compare methods with each other for different datasets for the selected metric.
 
 *Content*:
 1. **00-rdata-to-csv** - converting RData from TEP Harvard dataset to CSV, splitting by run and fault-type. To work correctly, need to run it as a script in a virtual python environment (not in jupyter or pycharm).
