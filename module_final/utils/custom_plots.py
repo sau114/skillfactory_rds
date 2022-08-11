@@ -9,7 +9,7 @@ from plotly.subplots import make_subplots
 def plot_stacked(data: pd.DataFrame,
                  title: str = '',
                  suffixes: Optional[tuple] = None,
-                 anomaly: Optional[pd.Series] = None,
+                 anomalies: Optional[pd.Series] = None,
                  detect: Optional[pd.Series] = None,
                  height: Optional[int] = None,
                  ) -> None:
@@ -23,37 +23,42 @@ def plot_stacked(data: pd.DataFrame,
                    ) -> None:
         # plot rectangle area for anomalies or detect
         if vrect_type == 'anomaly':
-            fillcolor = 'red'
-            position = 'outside top left'
             prefix = 'A'
+            common_kwargs = {
+                'annotation_position': 'outside top left',
+                'fillcolor':  'red',
+                'opacity': 0.25,
+            }
         elif vrect_type == 'detect':
-            fillcolor = 'green'
-            position = 'outside bottom right'
             prefix = 'D'
+            common_kwargs = {
+                'annotation_position': 'outside bottom right',
+                'fillcolor':  'green',
+                'opacity': 0.25,
+            }
         else:
             raise ValueError(f'Wrong vrect type {vrect_type}')
-        series_ = series.copy()
-        series_[series.index[-1] + series.index.freq] = 0  # always finished by normal state
+        vector = series.copy()
+        vector[vector.index[-1] + vector.index.freq] = 0  # always finished by normal state
         state = 0
-        vrect = {'x0': None, 'x1': None, 'annotation_text': None}
-        for i in series_.index:
-            if series_[i] != state:
-                # value changed
+        period_kwargs = {'x0': None, 'x1': None, 'annotation_text': None}
+        for i in vector.index:
+            if vector[i] != state:
+                # if this anomaly finished
                 if state != 0:
-                    # this anomaly finished
-                    figr.add_vrect(**vrect,
-                                   annotation_position=position,
-                                   fillcolor=fillcolor,
-                                   opacity=0.25,
+                    figr.add_vrect(**period_kwargs,
+                                   **common_kwargs,
                                    )
-                # next anomaly
-                state = series_[i]
-                vrect['x0'] = i
-                vrect['annotation_text'] = prefix + str(series_[i])
-            vrect['x1'] = i
+                # next anomaly starting
+                state = vector[i]
+                period_kwargs['x0'] = i
+                period_kwargs['annotation_text'] = prefix + str(vector[i])
+            period_kwargs['x1'] = i
+        return
 
     # make figure with subplots
     if suffixes is not None:
+        # columns outside suffixes will in additional subplot
         n_subplots = len(suffixes) + max(0 if c.endswith(suffixes) else 1 for c in data.columns)
     else:
         suffixes = ()
@@ -62,22 +67,19 @@ def plot_stacked(data: pd.DataFrame,
                         shared_xaxes=True,
                         vertical_spacing=0.02,
                         row_titles=suffixes + ('other',),
-                        x_title=data.index.name,
-                        # y_title=title,
+                        # x_title=data.index.name,
                         )
-    # plot subplots using suffixes
+    # fill subplots using suffixes
     for i_subplot, suffix in enumerate(suffixes):
-        sfx_columns = [c for c in data.columns if c.endswith(suffix)]
-        for k in sfx_columns:
+        for k in [c for c in data.columns if c.endswith(suffix)]:
             fig.add_scatter(x=data[k].index,
                             y=data[k],
                             name=k,
                             row=i_subplot + 1,
                             col=1,
                             )
-    # plot other in last subplots
-    sfx_columns = [c for c in data.columns if not c.endswith(suffixes)]
-    for k in sfx_columns:
+    # plot other in additional subplots
+    for k in [c for c in data.columns if not c.endswith(suffixes)]:
         fig.add_scatter(x=data[k].index,
                         y=data[k],
                         name=k,
@@ -85,8 +87,8 @@ def plot_stacked(data: pd.DataFrame,
                         col=1,
                         )
     # plot anomaly area if possible
-    if anomaly is not None and max(anomaly):
-        plot_vrect(fig, anomaly, 'anomaly')
+    if anomalies is not None and max(anomalies):
+        plot_vrect(fig, anomalies, 'anomaly')
     # plot detect area if possible
     if detect is not None and max(detect):
         plot_vrect(fig, detect, 'detect')
