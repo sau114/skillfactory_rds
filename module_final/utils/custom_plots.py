@@ -13,30 +13,27 @@ def plot_stacked(data: pd.DataFrame,
                  detect: Optional[pd.Series] = None,
                  height: Optional[int] = None,
                  ) -> None:
-    '''
-    Plotting time series from dataframe in stacked subplots style with shared time axe.
-    Time series can group by suffix.
-    Anomaly and detect intervals can shown on subplots.
-    '''
+    # Plotting time series from dataframe in stacked subplots style with shared time axe.
+    # Time series can group by suffix.
+    # Anomaly and detect intervals can be shown on subplots.
 
     def plot_vrect(figr: go.Figure,
                    series: pd.Series,
                    vrect_type: str,
                    ) -> None:
-        # plot vrect area using series of states
+        # plot rectangle area for anomalies or detect
         if vrect_type == 'anomaly':
             fillcolor = 'red'
-            position = 'top'
+            position = 'outside top left'
             prefix = 'A'
         elif vrect_type == 'detect':
             fillcolor = 'green'
-            position = 'bottom'
+            position = 'outside bottom right'
             prefix = 'D'
         else:
             raise ValueError(f'Wrong vrect type {vrect_type}')
         series_ = series.copy()
-        index_delta = series.index[-1] - series.index[-2]
-        series_[series.index[-1] + index_delta] = 0  # always finished by normal state
+        series_[series.index[-1] + series.index.freq] = 0  # always finished by normal state
         state = 0
         vrect = {'x0': None, 'x1': None, 'annotation_text': None}
         for i in series_.index:
@@ -45,7 +42,7 @@ def plot_stacked(data: pd.DataFrame,
                 if state != 0:
                     # this anomaly finished
                     figr.add_vrect(**vrect,
-                                   annotation_position='outside ' + position,
+                                   annotation_position=position,
                                    fillcolor=fillcolor,
                                    opacity=0.25,
                                    )
@@ -63,7 +60,7 @@ def plot_stacked(data: pd.DataFrame,
         n_subplots = 1
     fig = make_subplots(rows=n_subplots,
                         shared_xaxes=True,
-                        vertical_spacing=0.05,
+                        vertical_spacing=0.02,
                         row_titles=suffixes + ('other',),
                         x_title=data.index.name,
                         # y_title=title,
