@@ -49,21 +49,17 @@ class GhlKasperskyDataset:
         self._valid_files = []
         self._train_size = None
         self._test_files = []
-        # current generator filename
-        self._gen_filename = None
         return
 
     def __repr__(self):
         return f'{self.__class__.__name__}({self.path})'
 
     def shake_not_stir(self,
-                       train_size: float = 0.8,
+                       train_size: float = 1.0,
                        random_state: int = 31,
                        ):
-        train_subdirs = ('train',
-                         )
-        test_subdirs = ('test',
-                        )
+        train_subdirs = ('train',)
+        test_subdirs = ('test',)
         random.seed(random_state)
         # list train-valid series
         files_list = []  # list of full paths to files
@@ -94,7 +90,6 @@ class GhlKasperskyDataset:
     def train_series_generator(self) -> tuple:
         # load train series and return series and anomaly attribute
         for filepath in self._train_files:
-            self._gen_filename = filepath
             series = pd.read_csv(filepath,
                                  dtype=self._dtypes,
                                  index_col='time',
@@ -102,12 +97,11 @@ class GhlKasperskyDataset:
             series= series.head(round(series.shape[0] * self._train_size))
             anomaly = series['attack'].rename('anomaly')
             series.drop(columns=['attack'], inplace=True)
-            yield (series, anomaly)
+            yield (series, anomaly, os.path.split(filepath)[1])
 
     def valid_series_generator(self) -> tuple:
         # load valid series and return series and anomaly attribute
         for filepath in self._valid_files:
-            self._gen_filename = filepath
             series = pd.read_csv(filepath,
                                  dtype=self._dtypes,
                                  index_col='time',
@@ -115,19 +109,26 @@ class GhlKasperskyDataset:
             series= series.tail(series.shape[0] - round(series.shape[0] * self._train_size))
             anomaly = series['attack'].rename('anomaly')
             series.drop(columns=['attack'], inplace=True)
-            yield (series, anomaly)
+            yield (series, anomaly, os.path.split(filepath)[1])
 
     def test_series_generator(self) -> tuple:
         # load test series and return series and anomaly attribute
         for filepath in self._test_files:
-            self._gen_filename = filepath
             series = pd.read_csv(filepath,
                                  dtype=self._dtypes,
                                  index_col='time',
                                  )
             anomaly = series['attack'].rename('anomaly')
             series.drop(columns=['attack'], inplace=True)
-            yield (series, anomaly)
+            # choose one of the halves, anomaly is in one of them
+            half = series.shape[0] // 2
+            if random.randint(0, 1):
+                series = series.iloc[:half]
+                anomaly = anomaly.iloc[:half]
+            else:
+                series = series.iloc[half:]
+                anomaly = anomaly.iloc[half:]
+            yield (series, anomaly, os.path.split(filepath)[1])
 
 
 class TepHarvardDataset:
@@ -144,7 +145,7 @@ class TepHarvardDataset:
         else:
             self.path = path
 
-        # check predefined dtypes_
+        # check predefined dtypes
         self._dtypes = None
         try:
             with open(os.path.join(self.path, 'dtypes.json'), 'r') as f:
@@ -168,17 +169,16 @@ class TepHarvardDataset:
         self._train_files = []
         self._valid_files = []
         self._test_files = []
-        # current generator filename
-        self._gen_filename = None
         return
 
     def __repr__(self):
         return f'{self.__class__.__name__}({self.path})'
 
     def shake_not_stir(self,
-                       train_size: float = 0.8,
+                       train_size: float = 1.0,
                        random_state: int = 31,
                        only_normal_train: bool = True,
+                       balanced_test: bool = True,
                        ):
         if only_normal_train:
             train_subdirs = ('fault_free_training',
@@ -213,13 +213,19 @@ class TepHarvardDataset:
                 for entry in it:
                     if entry.name.endswith('.csv') and entry.is_file():
                         files_list.append(entry.path)
+        if balanced_test:
+            files_normal = [f for f in files_list if 'fault_free' in f]
+            files_anomaly = [f for f in files_list if 'faulty' in f]
+            n_balance = min(len(files_normal), len(files_anomaly))
+            files_normal = random.sample(files_normal, k=n_balance)
+            files_anomaly = random.sample(files_anomaly, k=n_balance)
+            files_list = files_normal + files_anomaly
         self._test_files = random.sample(files_list, k=len(files_list))
         return
 
     def train_series_generator(self) -> tuple:
         # load train series and return series and anomaly attribute
         for filepath in self._train_files:
-            self._gen_filename = filepath
             series = pd.read_csv(filepath,
                                  dtype=self._dtypes,
                                  index_col='sample',
@@ -228,12 +234,11 @@ class TepHarvardDataset:
             # for train, anomaly start from 1 h (20 * 3 min) till end
             anomaly.iloc[0:20] = 0
             series.drop(columns=['faultNumber'], inplace=True)
-            yield (series, anomaly)
+            yield (series, anomaly, os.path.split(filepath)[1])
 
     def valid_series_generator(self) -> tuple:
         # load valid series and return series and anomaly attribute
         for filepath in self._valid_files:
-            self._gen_filename = filepath
             series = pd.read_csv(filepath,
                                  dtype=self._dtypes,
                                  index_col='sample',
@@ -242,12 +247,11 @@ class TepHarvardDataset:
             # for train, anomaly start from 1 h (20 * 3 min) till end
             anomaly.iloc[0:20] = 0
             series.drop(columns=['faultNumber'], inplace=True)
-            yield (series, anomaly)
+            yield (series, anomaly, os.path.split(filepath)[1])
 
     def test_series_generator(self) -> tuple:
         # load test series and return series and anomaly attribute
         for filepath in self._test_files:
-            self._gen_filename = filepath
             series = pd.read_csv(filepath,
                                  dtype=self._dtypes,
                                  index_col='sample',
@@ -256,7 +260,7 @@ class TepHarvardDataset:
             # for test, anomaly start from 8 h (160 * 3 min) till end
             anomaly.iloc[0:20] = 0
             series.drop(columns=['faultNumber'], inplace=True)
-            yield (series, anomaly)
+            yield (series, anomaly, os.path.split(filepath)[1])
 
 
 if __name__ == '__main__':
@@ -270,13 +274,13 @@ if __name__ == '__main__':
     print('test files:', len(dataset._test_files))
 
     gen = dataset.train_series_generator()
-    for series, anomaly in gen:
-        print('train yield:', series.shape, anomaly.shape, dataset._gen_filename)
+    for series, anomaly, path in gen:
+        print('train yield:', series.shape, anomaly.shape, path)
 
     gen = dataset.valid_series_generator()
-    for series, anomaly in gen:
-        print('valid yield:', series.shape, anomaly.shape, dataset._gen_filename)
+    for series, anomaly, path in gen:
+        print('valid yield:', series.shape, anomaly.shape, path)
 
     gen = dataset.test_series_generator()
-    for series, anomaly in gen:
-        print('test yield:', series.shape, anomaly.shape, dataset._gen_filename)
+    for series, anomaly, path in gen:
+        print('test yield:', series.shape, anomaly.shape, path)

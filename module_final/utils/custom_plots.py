@@ -6,13 +6,13 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-def plot_stacked_timeseries(data: pd.DataFrame,
-                            title: str = '',
-                            suffixes: Optional[tuple] = None,
-                            anomaly: Optional[pd.Series] = None,
-                            detect: Optional[pd.Series] = None,
-                            height: Optional[int] = None,
-                            ) -> None:
+def plot_stacked(data: pd.DataFrame,
+                 title: str = '',
+                 suffixes: Optional[tuple] = None,
+                 anomaly: Optional[pd.Series] = None,
+                 detect: Optional[pd.Series] = None,
+                 height: Optional[int] = None,
+                 ) -> None:
     '''
     Plotting time series from dataframe in stacked subplots style with shared time axe.
     Time series can group by suffix.
@@ -66,13 +66,14 @@ def plot_stacked_timeseries(data: pd.DataFrame,
                         vertical_spacing=0.05,
                         row_titles=suffixes + ('other',),
                         x_title=data.index.name,
-                        y_title=title,
+                        # y_title=title,
                         )
     # plot subplots using suffixes
     for i_subplot, suffix in enumerate(suffixes):
         sfx_columns = [c for c in data.columns if c.endswith(suffix)]
         for k in sfx_columns:
-            fig.add_scatter(y=data[k],
+            fig.add_scatter(x=data[k].index,
+                            y=data[k],
                             name=k,
                             row=i_subplot + 1,
                             col=1,
@@ -80,7 +81,8 @@ def plot_stacked_timeseries(data: pd.DataFrame,
     # plot other in last subplots
     sfx_columns = [c for c in data.columns if not c.endswith(suffixes)]
     for k in sfx_columns:
-        fig.add_scatter(y=data[k],
+        fig.add_scatter(x=data[k].index,
+                        y=data[k],
                         name=k,
                         row=n_subplots,
                         col=1,
@@ -93,4 +95,5 @@ def plot_stacked_timeseries(data: pd.DataFrame,
         plot_vrect(fig, detect, 'detect')
     if height is not None:
         fig.update_layout(height=n_subplots * height)
+    fig.update_layout(title_text=title)
     fig.show()
