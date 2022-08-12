@@ -12,6 +12,7 @@ Industrial process is influenced by various factors:
 - manual intervention of personnel;
 - malicious attacks.
 Digital control can compensate for some of these factors, but in this case, the industrial process will not work optimally.
+
 In this project, we want explore various methods of anomaly detection for industrial production processes.
 Preference will be for methods that can be deploy for online detection.
 
