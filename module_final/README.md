@@ -5,24 +5,28 @@
 *Target*: Industrial process is complex interaction of objects of different nature to obtain a certain product. 
 Modern industrial processes are performed under digital control (local controllers, complex PLC, SCADA etc.).
 Industrial process is influenced by various factors:
-- changing the parameters (temperature, concentration, flow etc.) of the sources;
+- changing the parameters (temperature, concentration, flow rate etc.) of the sources;
 - various equipment malfunctions (leaks, wear, jammed etc.);
 - failures of sensors and actuators;
 - failures of digital control (faulty I/O modules, incorrect algorithms etc.);
 - manual intervention of personnel;
 - malicious attacks.
-Digital control can compensate for some of these factors, but in this case, the industrila process will not work optimally.
+Digital control can compensate for some of these factors, but in this case, the industrial process will not work optimally.
 In this project, we want explore various methods of anomaly detection for industrial production processes.
 Preference will be for methods that can be deploy for online detection.
 
 *About*: Industrial system is presented by a time series of data from sensors and actuators.
+All of features have a physical meaning: temperature, level, flow rate, feed ratio etc.
+Some important physical features may not be included due to the inability to measure them.
+Relationships between the features is unknown, nonlinear and has different dynamics.
 The data is sampled by typical frequency of data accumulation in modern industrial systems. Usually it's minutes, not seconds.
 Training data usually corresponds to a normal process. Test data can be either normal or include malfunctions.
 
 *Content*:
 1. **00-rdata-to-csv** - converting RData from TEP Harvard dataset to CSV, splitting by run and fault-type. To work correctly, need to run it as a script in a virtual python environment (not in jupyter or pycharm).
 2. **01-ghl-cooking** - converting GHL dataset to CSV with processing for more realistic (drop virtual tags and downsample to 1 min interval).
-3. 
+3. **20-simple-watchman-ghl**, **21-simple-watchman-tep** - check SimpleWatchman on various datasets.
+4. 
 
 *Datasets*:
 1. **GHL - Gasoil Heating Loop**
