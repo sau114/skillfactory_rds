@@ -5,9 +5,9 @@ class WatchmanError(ValueError):
     pass
 
 
-class SimpleWatchman:
-    # Store limits of values.
-    # Consider values outside of limits to be anomalies.
+class LimitWatchman:
+    # On learn - store limit values with tolerance.
+    # On examine - values must be in limits.
 
     def __init__(self):
         self.limits = {}  # dict of watched values
@@ -23,16 +23,15 @@ class SimpleWatchman:
                     'hi': data[c].max(),
                 }
             mean = (data[c].max() + data[c].min()) / 2
-            half_span = (data[c].max() - data[c].min()) / 2
-            self.limits[c]['lo'] = min(self.limits[c]['lo'], mean - half_span * (1 + tolerance))
-            self.limits[c]['hi'] = max(self.limits[c]['hi'], mean + half_span * (1 + tolerance))
+            half_range = (data[c].max() - data[c].min()) / 2
+            self.limits[c]['lo'] = min(self.limits[c]['lo'], mean - half_range * (1 + tolerance))
+            self.limits[c]['hi'] = max(self.limits[c]['hi'], mean + half_range * (1 + tolerance))
         return
 
-    def examine(self, data: pd.DataFrame) -> pd.Series:
+    def examine(self, data: pd.DataFrame) -> pd.DataFrame:
         # examine this data for anomalies
-        result = pd.Series(index=data.index, data=0, dtype='uint8')
+        result = pd.DataFrame(index=data.index, columns=data.columns, data=0, dtype='uint8')
         for c in data.columns:
             if c in self.limits:
-                result += data[c] < self.limits[c]['lo']
-                result += data[c] > self.limits[c]['hi']
+                result[c] = ~data[c].between(self.limits[c]['lo'], self.limits[c]['hi'])
         return result

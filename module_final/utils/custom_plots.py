@@ -1,98 +1,102 @@
-from typing import Optional
+from typing import Optional, Union
 
 import pandas as pd
 
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from adtk.data import to_events
+
 
 def plot_stacked(data: pd.DataFrame,
+                 # suffixes: Optional[tuple] = None,
+                 group: str = 'value_unit',  # scheme of grouping curves
+                 faults: Optional[Union[pd.Series, pd.DataFrame]] = None,
+                 detect: Optional[Union[pd.Series, pd.DataFrame]] = None,
                  title: str = '',
-                 suffixes: Optional[tuple] = None,
-                 anomalies: Optional[pd.Series] = None,
-                 detect: Optional[pd.Series] = None,
-                 height: Optional[int] = None,
+                 height: Optional[int] = 200,
                  ) -> None:
     # Plotting time series from dataframe in stacked subplots style with shared time axe.
-    # Time series can group by suffix.
+    # Time series can group, expected that named in scheme 'name_value_unit'.
     # Anomaly and detect intervals can be shown on subplots.
 
-    def plot_vrect(figr: go.Figure,
-                   series: pd.Series,
+    def add_marks(fig: go.Figure,
+                   events: list,
                    vrect_type: str,
+                   row = 'all',
                    ) -> None:
         # plot rectangle area for anomalies or detect
-        if vrect_type == 'anomaly':
-            prefix = 'A'
+        if vrect_type == 'fault':
             common_kwargs = {
-                'annotation_position': 'outside top left',
                 'fillcolor':  'red',
-                'opacity': 0.25,
+                'opacity': 0.3,
             }
         elif vrect_type == 'detect':
-            prefix = 'D'
             common_kwargs = {
-                'annotation_position': 'outside bottom right',
                 'fillcolor':  'green',
-                'opacity': 0.25,
+                'opacity': 0.3,
             }
         else:
-            raise ValueError(f'Wrong vrect type {vrect_type}')
-        vector = series.copy()
-        vector[vector.index[-1] + vector.index.freq] = 0  # always finished by normal state
-        state = 0
-        period_kwargs = {'x0': None, 'x1': None, 'annotation_text': None}
-        for i in vector.index:
-            if vector[i] != state:
-                # if this anomaly finished
-                if state != 0:
-                    figr.add_vrect(**period_kwargs,
-                                   **common_kwargs,
-                                   )
-                # next anomaly starting
-                state = vector[i]
-                period_kwargs['x0'] = i
-                period_kwargs['annotation_text'] = prefix + str(vector[i])
-            period_kwargs['x1'] = i
+            raise ValueError(f'Unknown vrect type {vrect_type}')
+        for e in events:
+            if isinstance(e, tuple):
+                fig.add_vrect(x0=e[0],
+                              x1=e[1],
+                              row=row,
+                              **common_kwargs,
+                              )
+            else:
+                fig.add_vline(x=e,
+                              row=row,
+                              **common_kwargs,
+                              )
         return
 
-    # make figure with subplots
-    if suffixes is not None:
-        # columns outside suffixes will in additional subplot
-        n_subplots = len(suffixes) + max(0 if c.endswith(suffixes) else 1 for c in data.columns)
+    # generate grouping rule
+    if group == 'unit':
+        # using unit in name_value_unit
+        endings = tuple(sorted(set(s.split('_')[-1] for s in data.columns)))
+    elif group == 'value_unit':
+        # using value_unit in name_value_unit
+        endings = tuple(sorted(set('_'.join(s.split('_')[-2:]) for s in data.columns)))
+    # custom grouping rules write here
     else:
-        suffixes = ()
-        n_subplots = 1
+        # not grouping
+        endings = ('',)
+    # destination subplot
+    n_subplots = len(endings)
+    subplot_number = dict()
+    for i, end in enumerate(endings):
+        for k in [c for c in data.columns if c.endswith(end)]:
+            subplot_number[k] = i + 1
+    # create figure
     fig = make_subplots(rows=n_subplots,
                         shared_xaxes=True,
                         vertical_spacing=0.02,
-                        row_titles=suffixes + ('other',),
-                        # x_title=data.index.name,
+                        row_titles=endings,
                         )
-    # fill subplots using suffixes
-    for i_subplot, suffix in enumerate(suffixes):
-        for k in [c for c in data.columns if c.endswith(suffix)]:
-            fig.add_scatter(x=data[k].index,
-                            y=data[k],
-                            name=k,
-                            row=i_subplot + 1,
-                            col=1,
-                            )
-    # plot other in additional subplots
-    for k in [c for c in data.columns if not c.endswith(suffixes)]:
-        fig.add_scatter(x=data[k].index,
-                        y=data[k],
-                        name=k,
-                        row=n_subplots,
+    # fill subplots using endings
+    for c in data.columns:
+        fig.add_scatter(x=data[c].index,
+                        y=data[c],
+                        name=c,
+                        row=subplot_number[c],
                         col=1,
                         )
-    # plot anomaly area if possible
-    if anomalies is not None and max(anomalies):
-        plot_vrect(fig, anomalies, 'anomaly')
-    # plot detect area if possible
+    # plot faults area if possible and needed
+    if faults is not None and max(faults):
+        if isinstance(faults, pd.Series):
+            add_marks(fig, to_events(faults > 0), 'fault')
+        else:
+            for c in faults.columns:
+                add_marks(fig, to_events(faults[c] > 0), 'fault', subplot_number[c])
+    # plot detect area if possible and needed
     if detect is not None and max(detect):
-        plot_vrect(fig, detect, 'detect')
-    if height is not None:
-        fig.update_layout(height=n_subplots * height)
+        if isinstance(detect, pd.Series):
+            add_marks(fig, to_events(detect > 0), 'detect')
+        else:
+            for c in detect.columns:
+                add_marks(fig, to_events(detect[c] > 0), 'detect', subplot_number[c])
+    fig.update_layout(height=n_subplots * height)
     fig.update_layout(title_text=title)
     fig.show()
