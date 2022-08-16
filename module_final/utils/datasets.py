@@ -29,14 +29,14 @@ class GhlKasperskyDataset:
             self.path = path
 
         # check predefined dtypes
-        self._dtypes = None
-        try:
-            with open(os.path.join(self.path, 'dtypes.json'), 'r') as f:
-                self._dtypes = json.load(f)
-        except OSError:
-            raise DatasetError('File dtypes.json is not available.')
-        except json.decoder.JSONDecodeError:
-            raise DatasetError('File dtypes.json is not valid JSON.')
+        # self._dtypes = None
+        # try:
+        #     with open(os.path.join(self.path, 'dtypes.json'), 'r') as f:
+        #         self._dtypes = json.load(f)
+        # except OSError:
+        #     raise DatasetError('File dtypes.json is not available.')
+        # except json.decoder.JSONDecodeError:
+        #     raise DatasetError('File dtypes.json is not valid JSON.')
 
         # check required sub-directories
         subdirs = ('train',
@@ -69,7 +69,7 @@ class GhlKasperskyDataset:
         for subdir in train_subdirs:
             with os.scandir(os.path.join(self.path, subdir)) as it:
                 for entry in it:
-                    if entry.name.endswith('.csv') and entry.is_file():
+                    if entry.name.endswith('.snappy') and entry.is_file():
                         filepath_list.append(entry.path)
         # in this dataset is only one long series for train-validation
         self._train_files = filepath_list
@@ -80,7 +80,7 @@ class GhlKasperskyDataset:
         for subdir in test_subdirs:
             with os.scandir(os.path.join(self.path, subdir)) as it:
                 for entry in it:
-                    if entry.name.endswith('.csv') and entry.is_file():
+                    if entry.name.endswith('.snappy') and entry.is_file():
                         filepath_list.append(entry.path)
         self._test_files = random.sample(filepath_list, k=len(filepath_list))
         return
@@ -88,10 +88,7 @@ class GhlKasperskyDataset:
     def train_generator(self) -> tuple:
         # load train, split by rows, prepare index
         for filepath in self._train_files:
-            data = pd.read_csv(filepath,
-                               dtype=self._dtypes,
-                               index_col='time',
-                               )
+            data = pd.read_parquet(filepath)
             data.index.name = None
             # dataset-specific
             data = data.head(round(data.shape[0] * self._train_size))
@@ -105,10 +102,7 @@ class GhlKasperskyDataset:
     def valid_generator(self) -> tuple:
         # load valid, split by rows, prepare index
         for filepath in self._valid_files:
-            data = pd.read_csv(filepath,
-                               dtype=self._dtypes,
-                               index_col='time',
-                               )
+            data = pd.read_parquet(filepath)
             data.index.name = None
             # dataset-specific
             data = data.head(round(data.shape[0] * self._train_size))
@@ -123,10 +117,7 @@ class GhlKasperskyDataset:
     def test_generator(self) -> tuple:
         # load valid, split by rows, prepare index
         for filepath in self._test_files:
-            data = pd.read_csv(filepath,
-                               dtype=self._dtypes,
-                               index_col='time',
-                               )
+            data = pd.read_parquet(filepath)
             data.index.name = None
             # dataset-specific
             data = data.head(round(data.shape[0] * self._train_size))
@@ -163,14 +154,14 @@ class TepHarvardDataset:
             self.path = path
 
         # check predefined dtypes
-        self._dtypes = None
-        try:
-            with open(os.path.join(self.path, 'dtypes.json'), 'r') as f:
-                self._dtypes = json.load(f)
-        except OSError:
-            raise DatasetError('File dtypes.json is not available.')
-        except json.decoder.JSONDecodeError:
-            raise DatasetError('File dtypes.json is not valid JSON.')
+        # self._dtypes = None
+        # try:
+        #     with open(os.path.join(self.path, 'dtypes.json'), 'r') as f:
+        #         self._dtypes = json.load(f)
+        # except OSError:
+        #     raise DatasetError('File dtypes.json is not available.')
+        # except json.decoder.JSONDecodeError:
+        #     raise DatasetError('File dtypes.json is not valid JSON.')
 
         # check required sub-directories
         subdirs = ('fault_free_training',
@@ -214,7 +205,7 @@ class TepHarvardDataset:
         for subdir in train_subdirs:
             with os.scandir(os.path.join(self.path, subdir)) as it:
                 for entry in it:
-                    if entry.name.endswith('.csv') and entry.is_file():
+                    if entry.name.endswith('.snappy') and entry.is_file():
                         filepath_list.append(entry.path)
         # split series to train and validation
         random.shuffle(filepath_list)
@@ -225,7 +216,7 @@ class TepHarvardDataset:
         for subdir in test_subdirs:
             with os.scandir(os.path.join(self.path, subdir)) as it:
                 for entry in it:
-                    if entry.name.endswith('.csv') and entry.is_file():
+                    if entry.name.endswith('.snappy') and entry.is_file():
                         filepath_list.append(entry.path)
         # kwarg balanced_test
         if balanced_test:
@@ -241,10 +232,7 @@ class TepHarvardDataset:
     def train_generator(self) -> tuple:
         # load train, prepare index
         for filepath in self._train_files:
-            data = pd.read_csv(filepath,
-                               dtype=self._dtypes,
-                               index_col='sample',
-                               )
+            data = pd.read_parquet(filepath)
             data.index.name = None
             # dataset-specific
             # for train first 1 h (20 * 3 min) always normal
@@ -259,10 +247,7 @@ class TepHarvardDataset:
     def valid_generator(self) -> tuple:
         # load valid, prepare index
         for filepath in self._valid_files:
-            data = pd.read_csv(filepath,
-                               dtype=self._dtypes,
-                               index_col='sample',
-                               )
+            data = pd.read_parquet(filepath)
             data.index.name = None
             # dataset-specific
             # for train first 1 h (20 * 3 min) always normal
@@ -277,10 +262,7 @@ class TepHarvardDataset:
     def test_generator(self) -> tuple:
         # load test, prepare index
         for filepath in self._test_files:
-            data = pd.read_csv(filepath,
-                               dtype=self._dtypes,
-                               index_col='sample',
-                               )
+            data = pd.read_parquet(filepath)
             data.index.name = None
             # dataset-specific
             # for train first 8 h (160 * 3 min) always normal

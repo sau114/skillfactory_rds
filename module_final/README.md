@@ -14,7 +14,7 @@ Industrial process is influenced by various factors:
 Digital control can compensate for some of these factors, but in this case, the industrial process will not work optimally.
 
 In this project, we want explore various methods of anomaly detection for industrial production processes.
-Preference will be for methods that can be deploy for online detection.
+Preference will be for methods that can be implement for online detection in real systems.
 
 *About*: Industrial system is presented by a time series of data from sensors and actuators.
 All of features have a physical meaning: temperature, level, flow rate, feed ratio etc.
