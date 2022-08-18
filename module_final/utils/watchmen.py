@@ -1,3 +1,5 @@
+from typing import Optional
+
 import pandas as pd
 
 from sklearn.preprocessing import StandardScaler
@@ -12,31 +14,35 @@ class LimitWatchman:
     # On learn - store limit values with tolerance.
     # On examine - values must be in limits.
 
-    def __init__(self):
-        self.limits = {}  # dict of watched values
+    def __init__(self, ewma: Optional[str] = None):
+        self.limits = None
+        self.halflife = ewma
         return
 
-    def learn(self, data: pd.DataFrame, tolerance: float = 0.05) -> None:
+    def learn(self,
+              data: pd.DataFrame,
+              tolerance: float = 0.05) -> None:
         # learn and store limits of this data
         # watchman don't forget previous limits
-        for c in data.columns:
-            if c not in self.limits:
-                self.limits[c] = {
-                    'lo': data[c].min(),
-                    'hi': data[c].max(),
-                }
-            mean = (data[c].max() + data[c].min()) / 2
-            half_range = (data[c].max() - data[c].min()) / 2
-            self.limits[c]['lo'] = min(self.limits[c]['lo'], mean - half_range * (1 + tolerance))
-            self.limits[c]['hi'] = max(self.limits[c]['hi'], mean + half_range * (1 + tolerance))
+        if self.limits is None:
+            self.limits = pd.DataFrame(index=data.columns, columns=['lo', 'hi'])
+            self.limits['lo'] = data.min()
+            self.limits['hi'] = data.max()
+        elif not self.limits.index.equals(data.columns):
+            raise WatchmanError('Fields of limits is not equals to data columns')
+        if self.halflife is not None:
+            data = data.ewm(halflife=self.halflife, times=data.index.values).mean()
+        mean = (data.max() + data.min()) / 2
+        half_range = (data.max() - data.min()) / 2
+        self.limits['lo'] = self.limits['lo'].combine(mean - half_range * (1 + tolerance), min)
+        self.limits['hi'] = self.limits['hi'].combine(mean + half_range * (1 + tolerance), max)
         return
 
     def examine(self, data: pd.DataFrame) -> pd.DataFrame:
         # examine this data for anomalies
-        result = pd.DataFrame(index=data.index, columns=data.columns, data=0, dtype='uint8')
-        for c in data.columns:
-            if c in self.limits:
-                result[c] = ~data[c].between(self.limits[c]['lo'], self.limits[c]['hi'])
+        if self.halflife is not None:
+            data = data.ewm(halflife=self.halflife, times=data.index.values).mean()
+        result = (data < self.limits['lo']) | (data > self.limits['hi'])
         return result
 
 
