@@ -143,11 +143,15 @@ class SpePcaWatchman:
     def learn(self, data: pd.DataFrame, tolerance: float = 0.05) -> None:
         # learn and store limits of this data
         # watchman don't forget previous limits
-        rest_data = pd.DataFrame(index=data.index,
-                                 columns=data.columns,
-                                 data=self.pca.inverse_transform(self.pca.transform(self.scaler.transform(data))),
-                                 )
-        spe = ((data - rest_data) ** 2).mean(axis=1)
+        scaled_data = pd.DataFrame(index=data.index,
+                                   columns=data.columns,
+                                   data=self.scaler.transform(data),
+                                   )
+        restored_data = pd.DataFrame(index=data.index,
+                                     columns=data.columns,
+                                     data=self.pca.inverse_transform(self.pca.transform(scaled_data.values)),
+                                     )
+        spe = ((scaled_data - restored_data) ** 2).mean(axis=1)
         if self.limits is None:
             self.limits = {
                 'lo': spe.min(),
@@ -161,10 +165,15 @@ class SpePcaWatchman:
 
     def examine(self, data: pd.DataFrame) -> pd.DataFrame:
         # examine this data for anomalies
-        rest_data = pd.DataFrame(index=data.index,
-                                 columns=data.columns,
-                                 data=self.pca.inverse_transform(self.pca.transform(self.scaler.transform(data))),
-                                 )
-        spe = ((data - rest_data) ** 2).mean(axis=1)
+        scaled_data = pd.DataFrame(index=data.index,
+                                   columns=data.columns,
+                                   data=self.scaler.transform(data),
+                                   )
+        restored_data = pd.DataFrame(index=data.index,
+                                     columns=data.columns,
+                                     data=self.pca.inverse_transform(self.pca.transform(scaled_data.values)),
+                                     )
+        spe = ((scaled_data - restored_data) ** 2).mean(axis=1)
         result = (spe < self.limits['lo']) | (spe > self.limits['hi'])
+        result = result.astype('uint8')
         return result
