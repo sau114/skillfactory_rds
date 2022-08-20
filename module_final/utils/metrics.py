@@ -3,11 +3,12 @@ from typing import Union
 import pandas as pd
 
 
-def precision(y_true: Union[pd.Series, pd.DataFrame],
-              y_pred: Union[pd.Series, pd.DataFrame],
-              batch_period: str = '15 min',
-              ) -> float:
-    # collapse to vector
+def time_span_metrics(y_true: Union[pd.Series, pd.DataFrame],
+                      y_pred: Union[pd.Series, pd.DataFrame],
+                      time_span: str = '15 min',
+                      beta: float = 1.0,
+                      ) -> tuple:
+    # collapse to bool vector
     if isinstance(y_true, pd.DataFrame):
         true_vec = (y_true != 0).any(axis=1)
     else:
@@ -16,78 +17,29 @@ def precision(y_true: Union[pd.Series, pd.DataFrame],
         pred_vec = (y_pred != 0).any(axis=1)
     else:
         pred_vec = (y_pred != 0)
-    # collapse by period, like any in period
-    true_vec = true_vec.resample(batch_period, origin='start_day').max()
-    pred_vec = pred_vec.resample(batch_period, origin='start_day').max()
-    # calc score
-    if ~pred_vec.any():
-        # metric is undefined
-        return float('nan')
-    tp = (true_vec & pred_vec).sum()
-    fp = (~true_vec & pred_vec).sum()
-    score = tp / (tp + fp)
-    return score
-
-
-def recall(y_true: Union[pd.Series, pd.DataFrame],
-           y_pred: Union[pd.Series, pd.DataFrame],
-           batch_period: str = '15 min',
-           ) -> float:
-    # collapse to vector
-    if isinstance(y_true, pd.DataFrame):
-        true_vec = (y_true != 0).any(axis=1)
-    else:
-        true_vec = (y_true != 0)
-    if isinstance(y_pred, pd.DataFrame):
-        pred_vec = (y_pred != 0).any(axis=1)
-    else:
-        pred_vec = (y_pred != 0)
-    # collapse by period, like any in period
-    true_vec = true_vec.resample(batch_period, origin='start_day').max()
-    pred_vec = pred_vec.resample(batch_period, origin='start_day').max()
-    # calc score
-    if ~true_vec.any():
-        # metric is undefined
-        return float('nan')
-    tp = (true_vec & pred_vec).sum()
-    fn = (true_vec & ~pred_vec).sum()
-    score = tp / (tp + fn)
-    return score
-
-
-def f1_score(y_true: Union[pd.Series, pd.DataFrame],
-             y_pred: Union[pd.Series, pd.DataFrame],
-             batch_period: str = '15 min',
-             ) -> float:
-    # collapse to vector
-    if isinstance(y_true, pd.DataFrame):
-        true_vec = (y_true != 0).any(axis=1)
-    else:
-        true_vec = (y_true != 0)
-    if isinstance(y_pred, pd.DataFrame):
-        pred_vec = (y_pred != 0).any(axis=1)
-    else:
-        pred_vec = (y_pred != 0)
-    # collapse by period, like any in period
-    true_vec = true_vec.resample(batch_period, origin='start_day').max()
-    pred_vec = pred_vec.resample(batch_period, origin='start_day').max()
-    # calc score
-    if ~true_vec.any() & ~pred_vec.any():
-        # metric is undefined
-        return float('nan')
+    # collapse by time span
+    true_vec = true_vec.resample(time_span, origin='start_day').max()
+    pred_vec = pred_vec.resample(time_span, origin='start_day').max()
+    # calc hits (always >= 0)
     tp = (true_vec & pred_vec).sum()
     fp = (~true_vec & pred_vec).sum()
     fn = (true_vec & ~pred_vec).sum()
+    # precision
     if tp + fp:
-        pre = tp / (tp + fp)
+        precision_score = tp / (tp + fp)
     else:
-        pre = float('nan')
+        # undefined
+        precision_score = float('nan')
+    # recall
     if tp + fn:
-        rec = tp / (tp + fn)
+        recall_score = tp / (tp + fn)
     else:
-        rec = float('nan')
-    if pd.isna(pre) | pd.isna(rec):
-        score = 0.
+        # undefined
+        recall_score = float('nan')
+    # f_beta (default f1)
+    if tp + fp + fn:
+        f_beta_score = (1+beta**2) * tp / ((1+beta**2) * tp + beta**2 * fn + fp)
     else:
-        score = 2 * pre * rec / (pre + rec)
-    return score
+        # undefined
+        f_beta_score = float('nan')
+    return precision_score, recall_score, f_beta_score
