@@ -4,6 +4,7 @@ import pandas as pd
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import IncrementalPCA, PCA
+from sklearn.ensemble import IsolationForest
 
 
 class WatchmanError(ValueError):
@@ -22,9 +23,9 @@ class LimitWatchman:
     def __repr__(self):
         return f'{self.__class__.__name__}(ewma={self.ewma})'
 
-    def learn(self,
-              data: pd.DataFrame,
-              tolerance: float = 0.05) -> None:
+    def partial_fit(self,
+                    data: pd.DataFrame,
+                    tolerance: float = 0.05) -> None:
         # learn and store limits of this data
         # watchman don't forget previous limits
         if self.limits is None:
@@ -41,7 +42,7 @@ class LimitWatchman:
         self.limits['hi'] = self.limits['hi'].combine(mean + half_range * (1 + tolerance), max)
         return
 
-    def examine(self, data: pd.DataFrame) -> pd.DataFrame:
+    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
         # examine this data for anomalies
         if self.ewma is not None:
             data = data.ewm(halflife=self.ewma, times=data.index.values).mean()
@@ -79,7 +80,7 @@ class LimitPcaWatchman:
         self.pca.partial_fit(self.scaler.transform(data))
         return
 
-    def learn(self, data: pd.DataFrame, tolerance: float = 0.01) -> None:
+    def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.01) -> None:
         # learn and store limits of this data
         # watchman don't forget previous limits
         pc_names = tuple('pc' + str(i) for i in range(self.pca.n_components))
@@ -99,7 +100,7 @@ class LimitPcaWatchman:
         self.limits['hi'] = self.limits['hi'].combine(mean + half_range * (1 + tolerance), max)
         return
 
-    def examine(self, data: pd.DataFrame) -> pd.DataFrame:
+    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
         # examine this data for anomalies
         pc_names = tuple('pc' + str(i) for i in range(self.pca.n_components))
         pc_data = pd.DataFrame(index=data.index,
@@ -140,7 +141,7 @@ class SpePcaWatchman:
         self.pca.partial_fit(self.scaler.transform(data))
         return
 
-    def learn(self, data: pd.DataFrame, tolerance: float = 0.05) -> None:
+    def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.05) -> None:
         # learn and store limits of this data
         # watchman don't forget previous limits
         scaled_data = pd.DataFrame(index=data.index,
@@ -163,7 +164,7 @@ class SpePcaWatchman:
         self.limits['hi'] = max(self.limits['hi'], mean + half_range * (1 + tolerance))
         return
 
-    def examine(self, data: pd.DataFrame) -> pd.DataFrame:
+    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
         # examine this data for anomalies
         scaled_data = pd.DataFrame(index=data.index,
                                    columns=data.columns,

@@ -21,10 +21,10 @@ def plot_stacked(data: pd.DataFrame,
     # Anomaly and detect intervals can be shown on subplots.
 
     def add_marks(fig: go.Figure,
-                   events: list,
-                   vrect_type: str,
-                   row = 'all',
-                   ) -> None:
+                  events: list,
+                  vrect_type: str,
+                  row: Union[str, int] = 'all',
+                  ) -> None:
         # plot rectangle area for anomalies or detect
         if vrect_type == 'fault':
             common_kwargs = {
