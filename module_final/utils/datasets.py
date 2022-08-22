@@ -92,7 +92,7 @@ class GhlKasperskyDataset:
             data.index.name = None
             # dataset-specific
             data = data.head(round(data.shape[0] * self._train_size))
-            data.index = pd.to_datetime(data.index, unit='m', origin=self._dt_origin)
+            data.index = pd.to_datetime(data.index.values, unit='m', origin=self._dt_origin)
             data.index.freq = '1 min'
             anomalies = data['attack'].rename('anomaly')
             data.drop(columns=['attack'], inplace=True)
@@ -106,7 +106,7 @@ class GhlKasperskyDataset:
             data.index.name = None
             # dataset-specific
             data = data.head(round(data.shape[0] * self._train_size))
-            data.index = pd.to_datetime(data.index, unit='m', origin=self._dt_origin)
+            data.index = pd.to_datetime(data.index.values, unit='m', origin=self._dt_origin)
             data.index.freq = '1 min'
             data = data.tail(data.shape[0] - round(data.shape[0] * self._train_size))
             anomalies = data['attack'].rename('anomaly')
@@ -121,18 +121,18 @@ class GhlKasperskyDataset:
             data.index.name = None
             # dataset-specific
             data = data.head(round(data.shape[0] * self._train_size))
-            data.index = pd.to_datetime(data.index, unit='m', origin=self._dt_origin)
+            data.index = pd.to_datetime(data.index.values, unit='m', origin=self._dt_origin)
             data.index.freq = '1 min'
             anomalies = data['attack'].rename('anomaly')
             data.drop(columns=['attack'], inplace=True)
             # choose one of the halves, anomaly is in one of them
-            half = data.shape[0] // 2
-            if random.randint(0, 1):
-                data = data.iloc[:half]
-                anomalies = anomalies.iloc[:half]
-            else:
-                data = data.iloc[half:]
-                anomalies = anomalies.iloc[half:]
+            # half = data.shape[0] // 2
+            # if random.randint(0, 1):
+            #     data = data.iloc[:half]
+            #     anomalies = anomalies.iloc[:half]
+            # else:
+            #     data = data.iloc[half:]
+            #     anomalies = anomalies.iloc[half:]
             filename = os.path.split(filepath)[1]
             yield data, anomalies, filename
 
