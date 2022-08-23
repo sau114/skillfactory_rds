@@ -178,3 +178,36 @@ class SpePcaWatchman:
         result = (spe < self.limits['lo']) | (spe > self.limits['hi'])
         result = result.astype('uint8')
         return result
+
+
+class IsolatedWatchman:
+    # Using Isolation Forest for anomaly detection
+
+    def __init__(self,
+                 n_trees: int = 100,
+                 max_features: float = 1.0,
+                 random_state: Optional[int] = None
+                 ):
+        self.forest = IsolationForest(n_estimators=0,
+                                      max_samples='auto',  # max 256
+                                      contamination='auto',
+                                      max_features=max_features,
+                                      n_jobs=-1,
+                                      random_state=random_state,
+                                      warm_start=True,
+                                      )
+        return
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}(n_trees={self.forest.n_estimators})'
+
+    def partial_fit(self, data: pd.DataFrame) -> None:
+        # self.forest.n_estimators += round(data.shape[0] / 256)
+        self.forest.n_estimators += data.shape[0] // 256
+        self.forest.fit(data)
+        return
+
+    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
+        result = pd.Series(index=data.index, data=self.forest.predict(data))
+        result = result.replace({1: 0, -1: 1}).astype('uint8')
+        return result

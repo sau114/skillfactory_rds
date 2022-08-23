@@ -142,7 +142,7 @@ class TepHarvardDataset:
 
     def shake_not_stir(self,
                        random_state: Optional[int] = None,
-                       valid_test_ratio: float = 0.0,  # don't used
+                       valid_test_ratio: float = 1.0,
                        balanced_test: bool = False,
                        ):
         if isinstance(random_state, int):
@@ -158,9 +158,6 @@ class TepHarvardDataset:
         # list train-valid series
         filepath_list = _scan_subdirs_for_snappy(self.path, train_subdirs)
         self._train_files = random.sample(filepath_list, k=len(filepath_list))
-        # list validation series
-        filepath_list = _scan_subdirs_for_snappy(self.path, valid_subdirs)
-        self._valid_files = random.sample(filepath_list, k=len(filepath_list))
         # list testing series
         filepath_list = _scan_subdirs_for_snappy(self.path, test_subdirs)
         if balanced_test:
@@ -171,6 +168,10 @@ class TepHarvardDataset:
             files_anom = random.sample(files_anom, k=n_balance)
             filepath_list = files_norm + files_anom
         self._test_files = random.sample(filepath_list, k=len(filepath_list))
+        # list validation series
+        filepath_list = _scan_subdirs_for_snappy(self.path, valid_subdirs)
+        n_valid = min(round(len(self._test_files) * valid_test_ratio), len(filepath_list))
+        self._valid_files = random.sample(filepath_list, k=n_valid)
         return
 
     def train_generator(self) -> tuple:
@@ -217,24 +218,95 @@ class TepHarvardDataset:
             yield data, anomalies, filename
 
 
-if __name__ == '__main__':
-    # dataset = GhlKasperskyDataset()
-    dataset = TepHarvardDataset()
-    print(dataset)
+class TepKasperskyDataset:
+    # TEP dataset from Kaspersky Lab
 
-    dataset.shake_not_stir()
-    print('train files:', len(dataset._train_files))
-    print('valid files:', len(dataset._valid_files))
-    print('test files:', len(dataset._test_files))
+    _dt_origin = '2022-08-01T00:00:00'
 
-    gen = dataset.train_generator()
-    for series, anomalies, name in gen:
-        print('train yield:', series.shape, anomalies.shape, name)
+    def __init__(self,
+                 path: str = 'E:\\Datasets\\TEP\\kaspersky',
+                 ):
+        # check path availability
+        self.path = None
+        if not os.path.isdir(path):
+            raise DatasetError(f'Path {path} is not available.')
+        else:
+            self.path = path
+        # check required sub-directories
+        subdirs = ('_pretreated',
+                   )
+        for d in subdirs:
+            if not os.path.isdir(os.path.join(self.path, d)):
+                raise DatasetError(f'Sub-directory {d} is not available.')
+        # lists of full path to files
+        self._train_files = []
+        self._valid_files = []
+        self._test_files = []
+        return
 
-    gen = dataset.valid_generator()
-    for series, anomalies, name in gen:
-        print('valid yield:', series.shape, anomalies.shape, name)
+    def __repr__(self):
+        return f'{self.__class__.__name__}({self.path})'
 
-    gen = dataset.test_generator()
-    for series, anomalies, name in gen:
-        print('test yield:', series.shape, anomalies.shape, name)
+    def shake_not_stir(self,
+                       random_state: Optional[int] = None,
+                       valid_test_ratio: float = 0.0,
+                       ):
+        if isinstance(random_state, int):
+            random.seed(random_state)
+        # kwarg only_normal_train
+        subdirs = ('_pretreated',
+                   )
+        # split full list by types
+        filepath_list = _scan_subdirs_for_snappy(self.path, subdirs)
+        single_state_list = [f for f in filepath_list if 'single_state_mode' in f]  # 200
+        transient_list = [f for f in filepath_list if 'transient_mode' in f]  # 346
+        attack_list = [f for f in filepath_list if 'attack_mode' in f]  # 142
+        random.shuffle(transient_list)
+        random.shuffle(attack_list)
+        # train series
+        n_trans2train = len(single_state_list)
+        train_list = single_state_list + transient_list[:n_trans2train]
+        self._train_files = random.sample(train_list, k=len(train_list))
+        # list validation series
+        n_tran2valid = round((len(transient_list) - n_trans2train) * valid_test_ratio)
+        n_attack2valid = round(len(attack_list) * valid_test_ratio)
+        valid_list = transient_list[n_trans2train:n_trans2train+n_tran2valid] + attack_list[:n_attack2valid]
+        self._valid_files = random.sample(valid_list, k=len(valid_list))
+        # list testing series
+        test_list = transient_list[n_trans2train+n_tran2valid:] + attack_list[n_attack2valid:]
+        self._test_files = random.sample(test_list, k=len(test_list))
+        return
+
+    def train_generator(self) -> tuple:
+        # load train, prepare index
+        for filepath in self._train_files:
+            data = pd.read_parquet(filepath)
+            data.index.name = None
+            data.index.freq = '1 min'
+            anomalies = data['attack'].rename('anomaly')
+            data.drop(columns=['attack'], inplace=True)
+            filename = os.path.split(filepath)[1]
+            yield data, anomalies, filename
+
+    def valid_generator(self) -> tuple:
+        # load valid, prepare index
+        for filepath in self._valid_files:
+            data = pd.read_parquet(filepath)
+            data.index.name = None
+            data.index.freq = '1 min'
+            anomalies = data['attack'].rename('anomaly')
+            data.drop(columns=['attack'], inplace=True)
+            filename = os.path.split(filepath)[1]
+            yield data, anomalies, filename
+
+    def test_generator(self) -> tuple:
+        # load test, prepare index
+        for filepath in self._test_files:
+            data = pd.read_parquet(filepath)
+            data.index.name = None
+            data.index.freq = '1 min'
+            anomalies = data['attack'].rename('anomaly')
+            data.drop(columns=['attack'], inplace=True)
+            filename = os.path.split(filepath)[1]
+            yield data, anomalies, filename
+
