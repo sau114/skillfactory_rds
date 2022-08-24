@@ -1,11 +1,14 @@
+import random
 from typing import Optional, Union
 
+import numpy as np
 import pandas as pd
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import IncrementalPCA, PCA
 from sklearn.ensemble import IsolationForest
 
+import rrcf
 
 class WatchmanError(ValueError):
     pass
@@ -180,34 +183,39 @@ class SpePcaWatchman:
         return result
 
 
-class IsolatedWatchman:
-    # Using Isolation Forest for anomaly detection
+class IsolatingWatchman:
+    # using Isolation Forest for anomaly detection
 
     def __init__(self,
-                 n_trees: int = 100,
+                 max_trees: int = 1000,
+                 max_samples: int = 256,
                  max_features: float = 1.0,
                  random_state: Optional[int] = None
                  ):
         self.forest = IsolationForest(n_estimators=0,
-                                      max_samples='auto',  # max 256
-                                      contamination='auto',
+                                      max_samples=max_samples,
                                       max_features=max_features,
-                                      n_jobs=-1,
                                       random_state=random_state,
+                                      contamination='auto',
+                                      n_jobs=-1,
                                       warm_start=True,
                                       )
+        self.max_trees = max_trees
         return
 
     def __repr__(self):
         return f'{self.__class__.__name__}(n_trees={self.forest.n_estimators})'
 
     def partial_fit(self, data: pd.DataFrame) -> None:
-        # self.forest.n_estimators += round(data.shape[0] / 256)
-        self.forest.n_estimators += data.shape[0] // 256
+        self.forest.n_estimators = max(self.max_trees,
+                                       self.forest.n_estimators + data.shape[0] // self.forest.max_samples
+                                       )
         self.forest.fit(data)
         return
 
     def predict(self, data: pd.DataFrame) -> pd.DataFrame:
-        result = pd.Series(index=data.index, data=self.forest.predict(data))
-        result = result.replace({1: 0, -1: 1}).astype('uint8')
+        result = (pd.Series(index=data.index, data=self.forest.predict(data))
+                  .replace({1: 0, -1: 1})
+                  .astype('uint8')
+                  )
         return result
