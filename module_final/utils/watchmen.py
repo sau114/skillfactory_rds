@@ -82,6 +82,12 @@ class LimitPcaWatchman:
         self.pca.partial_fit(self.scaler.transform(data))
         return
 
+    def get_pca_scree(self) -> pd.Series:
+        scree = pd.Series(index=range(1, self.pca.n_components_ + 1),
+                          data=self.pca.explained_variance_ratio_,
+                          )
+        return scree
+
     def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.01) -> None:
         # learn and store limits of this data
         # watchman don't forget previous limits
@@ -142,6 +148,12 @@ class SpePcaWatchman:
     def partial_fit_pca(self, data: pd.DataFrame) -> None:
         self.pca.partial_fit(self.scaler.transform(data))
         return
+
+    def get_pca_scree(self) -> pd.Series:
+        scree = pd.Series(index=range(1, self.pca.n_components_ + 1),
+                          data=self.pca.explained_variance_ratio_,
+                          )
+        return scree
 
     def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.05) -> None:
         # learn and store limits of this data
@@ -205,7 +217,7 @@ class IsolatingWatchman:
     def __repr__(self):
         return f'{self.__class__.__name__}(n_trees={self.forest.n_estimators})'
 
-    def partial_fit(self, data: pd.DataFrame, increment: Optional[int] = None) -> None:
+    def partial_fit(self, data: pd.DataFrame, increment: Optional[int] = 1) -> None:
         if increment is None or increment <= 0:
             inc = data.shape[0] // self.forest.max_samples
         else:

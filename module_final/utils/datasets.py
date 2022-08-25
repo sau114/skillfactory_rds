@@ -81,7 +81,10 @@ class GhlKasperskyDataset:
             anomalies = data['attack'].rename('anomaly')
             data.drop(columns=['attack'], inplace=True)
             filename = os.path.split(filepath)[1]
-            yield data, anomalies, filename
+            # split one long series by 25 hours
+            step = 25 * 60
+            for i in range(0, len(data.index), step):
+                yield data.iloc[i:i+step], anomalies.iloc[i:i+step], filename
 
     def valid_generator(self) -> tuple:
         # load valid, prepare index

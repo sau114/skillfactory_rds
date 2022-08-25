@@ -87,6 +87,8 @@ def plot_stacked(data: pd.DataFrame,
     if faults is not None and max(faults):
         if isinstance(faults, pd.Series):
             add_marks(fig, to_events(faults > 0), 'fault')
+        elif set(faults.columns) != set(data.columns):
+            add_marks(fig, to_events(faults.sum(axis=1) > 0), 'fault')
         else:
             for c in faults.columns:
                 add_marks(fig, to_events(faults[c] > 0), 'fault', subplot_number[c])
@@ -94,6 +96,8 @@ def plot_stacked(data: pd.DataFrame,
     if detect is not None and max(detect):
         if isinstance(detect, pd.Series):
             add_marks(fig, to_events(detect > 0), 'detect')
+        elif set(detect.columns) != set(data.columns):
+            add_marks(fig, to_events(detect.sum(axis=1) > 0), 'detect')
         else:
             for c in detect.columns:
                 add_marks(fig, to_events(detect[c] > 0), 'detect', subplot_number[c])
