@@ -313,3 +313,98 @@ class TepKasperskyDataset:
             filename = os.path.split(filepath)[1]
             yield data, anomalies, filename
 
+
+class SwatItrustDataset:
+    # SWaT dataset from iTrust
+
+    def __init__(self,
+                 path: str = 'E:\\Datasets\\SWaT\\dataset12',
+                 ):
+        # check path availability
+        self.path = None
+        if not os.path.isdir(path):
+            raise DatasetError(f'Path {path} is not available.')
+        else:
+            self.path = path
+        # check required sub-directories
+        # subdirs = ('dataset12',
+        #            )
+        # for d in subdirs:
+        #     if not os.path.isdir(os.path.join(self.path, d)):
+        #         raise DatasetError(f'Sub-directory {d} is not available.')
+        # lists of full path to files
+        self._train_files = []
+        self._valid_files = []
+        self._test_files = []
+        # dataset-specific
+        self._valid_test_ratio = None
+        return
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}({self.path})'
+
+    def shake_not_stir(self,
+                       random_state: Optional[int] = None,
+                       valid_test_ratio: float = 0.0,
+                       ):
+        if isinstance(random_state, int):
+            random.seed(random_state)
+        # sub-directories with data
+        train_files = ('SWaT_Dataset_Normal_v1.snappy',
+                       # 'SWaT_Dataset_Normal_v0.snappy',
+                       )
+        test_files = ('SWaT_Dataset_Attack_v0.snappy',
+                      )
+        # list train series
+        self._train_files = [os.path.join(self.path, f) for f in train_files]
+        # list valid-test series
+        self._valid_files = [os.path.join(self.path, f) for f in test_files]
+        self._valid_test_ratio = valid_test_ratio
+        self._test_files = [os.path.join(self.path, f) for f in test_files]
+        return
+
+    def train_generator(self) -> tuple:
+        # load train, prepare index
+        for filepath in self._train_files:
+            data = pd.read_parquet(filepath)
+            data.index.name = None
+            data.index.freq = '1 min'
+            anomalies = data['attack'].rename('anomaly')
+            data.drop(columns=['attack'], inplace=True)
+            filename = os.path.split(filepath)[1]
+            # split one long series by 24 hours
+            step = 24 * 60
+            for i in range(0, len(data.index), step):
+                yield data.iloc[i:i+step], anomalies.iloc[i:i+step], filename
+
+    def valid_generator(self) -> tuple:
+        # load valid, prepare index
+        for filepath in self._valid_files:
+            data = pd.read_parquet(filepath)
+            n_valid = round(data.shape[0] * self._valid_test_ratio)
+            data = data.iloc[:n_valid].copy()
+            data.index.name = None
+            data.index.freq = '1 min'
+            anomalies = data['attack'].rename('anomaly')
+            data.drop(columns=['attack'], inplace=True)
+            filename = os.path.split(filepath)[1]
+            # split one long series by 24 hours
+            step = 24 * 60
+            for i in range(0, len(data.index), step):
+                yield data.iloc[i:i+step], anomalies.iloc[i:i+step], filename
+
+    def test_generator(self) -> tuple:
+        # load valid, prepare index
+        for filepath in self._valid_files:
+            data = pd.read_parquet(filepath)
+            n_valid = round(data.shape[0] * self._valid_test_ratio)
+            data = data.iloc[n_valid:].copy()
+            data.index.name = None
+            data.index.freq = '1 min'
+            anomalies = data['attack'].rename('anomaly')
+            data.drop(columns=['attack'], inplace=True)
+            filename = os.path.split(filepath)[1]
+            # split one long series by 24 hours
+            step = 24 * 60
+            for i in range(0, len(data.index), step):
+                yield data.iloc[i:i+step], anomalies.iloc[i:i+step], filename
