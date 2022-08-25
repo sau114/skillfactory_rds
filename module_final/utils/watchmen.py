@@ -8,7 +8,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import IncrementalPCA, PCA
 from sklearn.ensemble import IsolationForest
 
-import rrcf
 
 class WatchmanError(ValueError):
     pass
@@ -206,9 +205,13 @@ class IsolatingWatchman:
     def __repr__(self):
         return f'{self.__class__.__name__}(n_trees={self.forest.n_estimators})'
 
-    def partial_fit(self, data: pd.DataFrame) -> None:
-        self.forest.n_estimators = max(self.max_trees,
-                                       self.forest.n_estimators + data.shape[0] // self.forest.max_samples
+    def partial_fit(self, data: pd.DataFrame, increment: Optional[int] = None) -> None:
+        if increment is None or increment <= 0:
+            inc = data.shape[0] // self.forest.max_samples
+        else:
+            inc = increment
+        self.forest.n_estimators = min(self.max_trees,
+                                       self.forest.n_estimators + inc
                                        )
         self.forest.fit(data)
         return
