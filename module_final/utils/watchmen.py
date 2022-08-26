@@ -5,8 +5,9 @@ import numpy as np
 import pandas as pd
 
 from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import IncrementalPCA, PCA
+from sklearn.decomposition import IncrementalPCA
 from sklearn.ensemble import IsolationForest
+from sklearn.linear_model import SGDRegressor
 
 
 class WatchmanError(ValueError):
@@ -55,16 +56,11 @@ class LimitWatchman:
 class LimitPcaWatchman:
     # Same as LimitWatchman, but in space of principal components.
 
-    def __init__(self, n_components: Union[str, int] = 'auto'):
+    def __init__(self, n_components: int):
         self.limits = None
         self.scaler = StandardScaler()
         self.n_components = n_components
-        if self.n_components == 'auto':
-            self.pca = IncrementalPCA(n_components=1)
-        elif isinstance(self.n_components, int) and self.n_components > 0:
-            self.pca = IncrementalPCA(n_components=self.n_components)
-        else:
-            raise WatchmanError('Wrong value of n_components')
+        self.pca = IncrementalPCA(n_components=self.n_components)
         return
 
     def __repr__(self):
@@ -72,10 +68,6 @@ class LimitPcaWatchman:
 
     def partial_fit_scaler(self, data: pd.DataFrame) -> None:
         self.scaler.partial_fit(data)
-        if self.n_components == 'auto':
-            pca = PCA(n_components='mle')
-            pca.fit(data)
-            self.pca.n_components = max(self.pca.n_components, pca.n_components_)
         return
 
     def partial_fit_pca(self, data: pd.DataFrame) -> None:
@@ -122,16 +114,11 @@ class LimitPcaWatchman:
 class SpePcaWatchman:
     # Same as LimitPcaWatchman, but watch only for square prediction error (SPE) aka Q statistic.
 
-    def __init__(self, n_components: Union[str, int] = 'auto'):
+    def __init__(self, n_components: int):
         self.limits = None
         self.scaler = StandardScaler()
         self.n_components = n_components
-        if self.n_components == 'auto':
-            self.pca = IncrementalPCA(n_components=1)
-        elif isinstance(self.n_components, int) and self.n_components > 0:
-            self.pca = IncrementalPCA(n_components=self.n_components)
-        else:
-            raise WatchmanError('Wrong value of n_components')
+        self.pca = IncrementalPCA(n_components=self.n_components)
         return
 
     def __repr__(self):
@@ -139,10 +126,6 @@ class SpePcaWatchman:
 
     def partial_fit_scaler(self, data: pd.DataFrame) -> None:
         self.scaler.partial_fit(data)
-        if self.n_components == 'auto':
-            pca = PCA(n_components='mle')
-            pca.fit(data)
-            self.pca.n_components = max(self.pca.n_components, pca.n_components_)
         return
 
     def partial_fit_pca(self, data: pd.DataFrame) -> None:
@@ -233,4 +216,76 @@ class IsolatingWatchman:
                   .replace({1: 0, -1: 1})
                   .astype('uint8')
                   )
+        return result
+
+
+class LinearPredictWatchman:
+    # using linear regressors for predict next value and calc limits of error
+
+    def __init__(self,
+                 random_state: Optional[int] = None,
+                 also_compute_spe: bool = True,
+                 ):
+        self.limits = None  # predict error limits
+        self.scaler = StandardScaler()
+        self.regressors = None
+        self.random_state = random_state
+        if also_compute_spe:
+            self.spe_hi = 0.0
+        else:
+            self.spe_hi = None
+        return
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}(n_features={len(self.regressors)})'
+
+    def partial_fit_scaler(self, data: pd.DataFrame) -> None:
+        if self.regressors is None:
+            # create regressors
+            self.regressors = {c: SGDRegressor(random_state=self.random_state,
+                                               warm_start=True,
+                                               ) for c in data.columns}
+        if self.limits is None:
+            # create limits
+            self.limits = pd.DataFrame(index=data.columns, columns=['lo', 'hi'])
+            self.limits['lo'] = 0.0
+            self.limits['hi'] = 0.0
+        self.scaler.partial_fit(data)
+        return
+
+    def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.05) -> None:
+        # fit regressors on data
+        x_ = self.scaler.transform(data)
+        x = x_[:-1]  # without last row
+        errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
+        for j, c in enumerate(data.columns):
+            y = x_[1:, j]  # without first row
+            # self.regressors[c].fit(x, y)
+            self.regressors[c].partial_fit(x, y)
+            # compute predict errors
+            errors[c] = y - self.regressors[c].predict(x)
+        # update limits
+        center = (errors.max() + errors.min()) / 2
+        scope = (errors.max() - errors.min()) / 2
+        self.limits['lo'] = self.limits['lo'].combine(center - scope * (1 + tolerance), min)
+        self.limits['hi'] = self.limits['hi'].combine(center + scope * (1 + tolerance), max)
+        if self.spe_hi is not None:
+            self.spe_hi = max((errors**2).mean(axis=1).max() * (1 + tolerance), self.spe_hi)
+        return
+
+    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
+        # predict values and check error's limits
+        result = pd.DataFrame(index=data.index, columns=data.columns, data=0, dtype='uint8')
+        x_ = self.scaler.transform(data)
+        x = x_[:-1]  # without last row
+        errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
+        for j, c in enumerate(data.columns):
+            y = x_[1:, j]  # without first row
+            errors[c] = y - self.regressors[c].predict(x)
+        result.loc[data.index[1]:] = (errors < self.limits['lo']) | (errors > self.limits['hi'])
+        if self.spe_hi is not None:
+            spe = (errors**2).mean(axis=1)
+            result['spe'] = 0
+            result.loc[data.index[1]:, 'spe'] = spe > self.spe_hi
+        result = result.astype('uint8')
         return result
