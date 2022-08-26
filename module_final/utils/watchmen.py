@@ -184,13 +184,14 @@ class IsolatingWatchman:
                  max_trees: int = 1000,
                  max_samples: int = 256,
                  max_features: float = 1.0,
-                 random_state: Optional[int] = None
+                 random_state: Optional[int] = None,
+                 contamination: Union[str, float] = 'auto',
                  ):
         self.forest = IsolationForest(n_estimators=0,
                                       max_samples=max_samples,
                                       max_features=max_features,
                                       random_state=random_state,
-                                      contamination='auto',
+                                      contamination=contamination,
                                       n_jobs=-1,
                                       warm_start=True,
                                       )
@@ -208,11 +209,11 @@ class IsolatingWatchman:
         self.forest.n_estimators = min(self.max_trees,
                                        self.forest.n_estimators + inc
                                        )
-        self.forest.fit(data)
+        self.forest.fit(data.values)
         return
 
     def predict(self, data: pd.DataFrame) -> pd.DataFrame:
-        result = (pd.Series(index=data.index, data=self.forest.predict(data))
+        result = (pd.Series(index=data.index, data=self.forest.predict(data.values))
                   .replace({1: 0, -1: 1})
                   .astype('uint8')
                   )
