@@ -7,7 +7,7 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import IncrementalPCA
 from sklearn.ensemble import IsolationForest
-from sklearn.linear_model import SGDRegressor
+from sklearn.linear_model import SGDRegressor, SGDClassifier
 
 
 class WatchmanError(ValueError):
@@ -25,6 +25,10 @@ class LimitWatchman:
 
     def __repr__(self):
         return f'{self.__class__.__name__}(ewma={self.ewma})'
+
+    def prefit(self, data: pd.DataFrame) -> None:
+        # nothng
+        return
 
     def partial_fit(self,
                     data: pd.DataFrame,
@@ -66,11 +70,8 @@ class LimitPcaWatchman:
     def __repr__(self):
         return f'{self.__class__.__name__}(n_components={self.n_components})'
 
-    def partial_fit_scaler(self, data: pd.DataFrame) -> None:
+    def prefit(self, data: pd.DataFrame) -> None:
         self.scaler.partial_fit(data)
-        return
-
-    def partial_fit_pca(self, data: pd.DataFrame) -> None:
         self.pca.partial_fit(self.scaler.transform(data))
         return
 
@@ -124,11 +125,8 @@ class SpePcaWatchman:
     def __repr__(self):
         return f'{self.__class__.__name__}(n_components={self.n_components})'
 
-    def partial_fit_scaler(self, data: pd.DataFrame) -> None:
+    def prefit(self, data: pd.DataFrame) -> None:
         self.scaler.partial_fit(data)
-        return
-
-    def partial_fit_pca(self, data: pd.DataFrame) -> None:
         self.pca.partial_fit(self.scaler.transform(data))
         return
 
@@ -201,6 +199,10 @@ class IsolatingWatchman:
     def __repr__(self):
         return f'{self.__class__.__name__}(n_trees={self.forest.n_estimators})'
 
+    def prefit(self, data: pd.DataFrame) -> None:
+        # nothing
+        return
+
     def partial_fit(self, data: pd.DataFrame, increment: Optional[int] = 1) -> None:
         if increment is None or increment <= 0:
             inc = data.shape[0] // self.forest.max_samples
@@ -226,6 +228,7 @@ class LinearPredictWatchman:
     def __init__(self,
                  random_state: Optional[int] = None,
                  also_compute_spe: bool = True,
+                 use_log_state: bool = True,
                  ):
         self.limits = None  # predict error limits
         self.scaler = StandardScaler()
@@ -235,17 +238,36 @@ class LinearPredictWatchman:
             self.spe_hi = 0.0
         else:
             self.spe_hi = None
+        self.use_log = use_log_state
+        self.lin_columns = None
+        self.log_columns = None
         return
 
     def __repr__(self):
         return f'{self.__class__.__name__}(n_features={len(self.regressors)})'
 
-    def partial_fit_scaler(self, data: pd.DataFrame) -> None:
+    def prefit(self, data: pd.DataFrame) -> None:
         if self.regressors is None:
             # create regressors
-            self.regressors = {c: SGDRegressor(random_state=self.random_state,
-                                               warm_start=True,
-                                               ) for c in data.columns}
+            if self.use_log:
+                self.log_columns = {c for c in data.columns if c.endswith('_state')}
+                self.lin_columns = {c for c in data.columns if ~c.endswith('_state')}
+            else:
+                self.lin_columns = {c for c in data.columns}
+            self.regressors = dict()
+            for c in data.columns:
+                if c in self.lin_columns:
+                    self.regressors[c] = SGDRegressor(random_state=self.random_state,
+                                                      warm_start=True,
+                                                      # can be: squared_error, huber, ...
+                                                      loss='squared_error',
+                                                      )
+                else:
+                    self.regressors[c] = SGDClassifier(random_state=self.random_state,
+                                                       warm_start=True,
+                                                       # can be: hinge, log_loss, squared_hinge, perceptron, ...
+                                                       loss='hinge',
+                                                       )
         if self.limits is None:
             # create limits
             self.limits = pd.DataFrame(index=data.columns, columns=['lo', 'hi'])
