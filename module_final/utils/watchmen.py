@@ -4,10 +4,10 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 
-from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import IncrementalPCA
 from sklearn.ensemble import IsolationForest
 from sklearn.linear_model import SGDRegressor, SGDClassifier
+from sklearn.preprocessing import StandardScaler
 
 
 class WatchmanError(ValueError):
@@ -181,20 +181,40 @@ class IsolatingWatchman:
     def __init__(self,
                  max_trees: int = 1000,
                  max_samples: int = 256,
-                 max_features: float = 1.0,
+                 # max_features: float = 1.0,
                  random_state: Optional[int] = None,
-                 contamination: Union[str, float] = 'auto',
+                 # contamination: Union[str, float] = 'auto',
+                 generate_stat_features: bool = True,
                  ):
         self.forest = IsolationForest(n_estimators=0,
                                       max_samples=max_samples,
-                                      max_features=max_features,
+                                      # max_features=max_features,
                                       random_state=random_state,
-                                      contamination=contamination,
+                                      # contamination=contamination,
                                       n_jobs=-1,
                                       warm_start=True,
                                       )
         self.max_trees = max_trees
+        self.generate_stat_features = generate_stat_features
         return
+
+    @staticmethod
+    def _generate_stat_features(data: pd.DataFrame, window: int = 15) -> pd.DataFrame:
+        float_data = data.select_dtypes(include='float')
+
+        data_mean = float_data.rolling(window, min_periods=1).mean()
+        data_mean.columns += '_mean'
+
+        data_median = float_data.rolling(window, min_periods=1).median()
+        data_median.columns += '_median'
+
+        data_std = float_data.rolling(window, min_periods=1).std().fillna(0)
+        data_std.columns += '_std'
+
+        data_kurt = float_data.rolling(window, min_periods=1).kurt().fillna(0)
+        data_kurt.columns += '_kurt'
+
+        return pd.concat([data, data_mean, data_median, data_std, data_kurt], axis=1)
 
     def __repr__(self):
         return f'{self.__class__.__name__}(n_trees={self.forest.n_estimators})'
@@ -208,6 +228,8 @@ class IsolatingWatchman:
             inc = data.shape[0] // self.forest.max_samples
         else:
             inc = increment
+        if self.generate_stat_features:
+            data = self._generate_stat_features(data)
         self.forest.n_estimators = min(self.max_trees,
                                        self.forest.n_estimators + inc
                                        )
@@ -215,6 +237,8 @@ class IsolatingWatchman:
         return
 
     def predict(self, data: pd.DataFrame) -> pd.DataFrame:
+        if self.generate_stat_features:
+            data = self._generate_stat_features(data)
         result = (pd.Series(index=data.index, data=self.forest.predict(data.values))
                   .replace({1: 0, -1: 1})
                   .astype('uint8')
@@ -250,10 +274,10 @@ class LinearPredictWatchman:
         if self.regressors is None:
             # create regressors
             if self.use_log:
-                self.log_columns = {c for c in data.columns if c.endswith('_state')}
-                self.lin_columns = {c for c in data.columns if ~c.endswith('_state')}
+                self.log_columns = [c for c in data.columns if c.endswith('_state')]
+                self.lin_columns = [c for c in data.columns if not c.endswith('_state')]
             else:
-                self.lin_columns = {c for c in data.columns}
+                self.lin_columns = [c for c in data.columns]
             self.regressors = dict()
             for c in data.columns:
                 if c in self.lin_columns:
@@ -265,26 +289,31 @@ class LinearPredictWatchman:
                 else:
                     self.regressors[c] = SGDClassifier(random_state=self.random_state,
                                                        warm_start=True,
-                                                       # can be: hinge, log_loss, squared_hinge, perceptron, ...
-                                                       loss='hinge',
+                                                       # can be: hinge, log/log_loss, squared_hinge, perceptron, ...
+                                                       loss='log',
                                                        )
         if self.limits is None:
             # create limits
             self.limits = pd.DataFrame(index=data.columns, columns=['lo', 'hi'])
             self.limits['lo'] = 0.0
             self.limits['hi'] = 0.0
-        self.scaler.partial_fit(data)
+        self.scaler.partial_fit(data[self.lin_columns])
         return
 
     def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.05) -> None:
         # fit regressors on data
-        x_ = self.scaler.transform(data)
+        x_ = data.copy()
+        x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
+        x_ = x_.values
         x = x_[:-1]  # without last row
         errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
         for j, c in enumerate(data.columns):
             y = x_[1:, j]  # without first row
             # self.regressors[c].fit(x, y)
-            self.regressors[c].partial_fit(x, y)
+            if c in self.lin_columns:
+                self.regressors[c].partial_fit(x, y)
+            else:
+                self.regressors[c].partial_fit(x, y, classes=np.array([0, 1, 2]))
             # compute predict errors
             errors[c] = y - self.regressors[c].predict(x)
         # update limits
@@ -299,7 +328,9 @@ class LinearPredictWatchman:
     def predict(self, data: pd.DataFrame) -> pd.DataFrame:
         # predict values and check error's limits
         result = pd.DataFrame(index=data.index, columns=data.columns, data=0, dtype='uint8')
-        x_ = self.scaler.transform(data)
+        x_ = data.copy()
+        x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
+        x_ = x_.values
         x = x_[:-1]  # without last row
         errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
         for j, c in enumerate(data.columns):
