@@ -52,8 +52,8 @@ class GhlKasperskyDataset:
         return f'{self.__class__.__name__}({self.path})'
 
     def shake_not_stir(self,
+                       valid_test_ratio: float = 0.3,
                        random_state: Optional[int] = None,
-                       valid_test_ratio: float = 0.0,
                        ):
         if isinstance(random_state, int):
             random.seed(random_state)
@@ -144,8 +144,8 @@ class TepHarvardDataset:
         return f'{self.__class__.__name__}({self.path})'
 
     def shake_not_stir(self,
-                       random_state: Optional[int] = None,
                        valid_test_ratio: float = 1.0,
+                       random_state: Optional[int] = None,
                        balanced_test: bool = False,
                        ):
         if isinstance(random_state, int):
@@ -251,8 +251,8 @@ class TepKasperskyDataset:
         return f'{self.__class__.__name__}({self.path})'
 
     def shake_not_stir(self,
+                       valid_test_ratio: float = 0.3,
                        random_state: Optional[int] = None,
-                       valid_test_ratio: float = 0.0,
                        ):
         if isinstance(random_state, int):
             random.seed(random_state)
@@ -344,8 +344,8 @@ class SwatItrustDataset:
         return f'{self.__class__.__name__}({self.path})'
 
     def shake_not_stir(self,
+                       valid_test_ratio: float = 0.3,
                        random_state: Optional[int] = None,
-                       valid_test_ratio: float = 0.0,
                        ):
         if isinstance(random_state, int):
             random.seed(random_state)

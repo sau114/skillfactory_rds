@@ -253,6 +253,7 @@ class LinearPredictWatchman:
                  random_state: Optional[int] = None,
                  also_compute_spe: bool = True,
                  use_log_state: bool = True,
+                 generate_derivatives: bool = False,
                  ):
         self.limits = None  # predict error limits
         self.scaler = StandardScaler()
@@ -265,14 +266,28 @@ class LinearPredictWatchman:
         self.use_log = use_log_state
         self.lin_columns = None
         self.log_columns = None
+        self.generate_derivatives = generate_derivatives
         return
 
     def __repr__(self):
         return f'{self.__class__.__name__}(n_features={len(self.regressors)})'
 
+    @staticmethod
+    def _generate_derivatives(data: pd.DataFrame, n: int = 1) -> pd.DataFrame:
+        float_data = data.select_dtypes(include='float')
+
+        derivatives = []
+        for i in range(1, n+1):
+            derivatives.append(float_data.diff(i).fillna(0))
+            derivatives[-1].columns += f'_d{i}'
+
+        return pd.concat([data, *derivatives], axis=1)
+
     def prefit(self, data: pd.DataFrame) -> None:
+        if self.generate_derivatives:
+            data = self._generate_derivatives(data)
+        # create regressors
         if self.regressors is None:
-            # create regressors
             if self.use_log:
                 self.log_columns = [c for c in data.columns if c.endswith('_state')]
                 self.lin_columns = [c for c in data.columns if not c.endswith('_state')]
@@ -292,15 +307,18 @@ class LinearPredictWatchman:
                                                        # can be: hinge, log/log_loss, squared_hinge, perceptron, ...
                                                        loss='log',
                                                        )
+        # create limits
         if self.limits is None:
-            # create limits
             self.limits = pd.DataFrame(index=data.columns, columns=['lo', 'hi'])
             self.limits['lo'] = 0.0
             self.limits['hi'] = 0.0
+        # fit scaler
         self.scaler.partial_fit(data[self.lin_columns])
         return
 
     def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.05) -> None:
+        if self.generate_derivatives:
+            data = self._generate_derivatives(data)
         # fit regressors on data
         x_ = data.copy()
         x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
@@ -327,6 +345,8 @@ class LinearPredictWatchman:
 
     def predict(self, data: pd.DataFrame) -> pd.DataFrame:
         # predict values and check error's limits
+        if self.generate_derivatives:
+            data = self._generate_derivatives(data)
         result = pd.DataFrame(index=data.index, columns=data.columns, data=0, dtype='uint8')
         x_ = data.copy()
         x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
@@ -339,7 +359,7 @@ class LinearPredictWatchman:
         result.loc[data.index[1]:] = (errors < self.limits['lo']) | (errors > self.limits['hi'])
         if self.spe_hi is not None:
             spe = (errors**2).mean(axis=1)
-            result['spe'] = 0
+            result = result.assign(spe=0.0)
             result.loc[data.index[1]:, 'spe'] = spe > self.spe_hi
         result = result.astype('uint8')
         return result
