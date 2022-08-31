@@ -54,6 +54,7 @@ class LimitWatchman:
         if self.ewma is not None:
             data = data.ewm(halflife=self.ewma, times=data.index.values).mean()
         result = (data < self.limits['lo']) | (data > self.limits['hi'])
+        result = result.astype('uint8')
         return result
 
 
@@ -109,6 +110,7 @@ class LimitPcaWatchman:
                                data=self.pca.transform(self.scaler.transform(data)),
                                )
         result = (pc_data < self.limits['lo']) | (pc_data > self.limits['hi'])
+        result = result.astype('uint8')
         return result
 
 
