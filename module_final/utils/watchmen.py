@@ -1,5 +1,4 @@
-import random
-from typing import Optional, Union
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -255,7 +254,6 @@ class LinearPredictWatchman:
                  random_state: Optional[int] = None,
                  also_compute_spe: bool = True,
                  use_log_state: bool = True,
-                 generate_derivatives: bool = False,
                  ):
         self.limits = None  # predict error limits
         self.scaler = StandardScaler()
@@ -268,26 +266,12 @@ class LinearPredictWatchman:
         self.use_log = use_log_state
         self.lin_columns = None
         self.log_columns = None
-        self.generate_derivatives = generate_derivatives
         return
 
     def __repr__(self):
         return f'{self.__class__.__name__}(n_features={len(self.regressors)})'
 
-    @staticmethod
-    def _generate_derivatives(data: pd.DataFrame, n: int = 1) -> pd.DataFrame:
-        float_data = data.select_dtypes(include='float')
-
-        derivatives = []
-        for i in range(1, n+1):
-            derivatives.append(float_data.diff(i).fillna(0))
-            derivatives[-1].columns += f'_d{i}'
-
-        return pd.concat([data, *derivatives], axis=1)
-
     def prefit(self, data: pd.DataFrame) -> None:
-        if self.generate_derivatives:
-            data = self._generate_derivatives(data)
         # create regressors
         if self.regressors is None:
             if self.use_log:
@@ -319,8 +303,6 @@ class LinearPredictWatchman:
         return
 
     def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.05) -> None:
-        if self.generate_derivatives:
-            data = self._generate_derivatives(data)
         # fit regressors on data
         x_ = data.copy()
         x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
@@ -347,8 +329,6 @@ class LinearPredictWatchman:
 
     def predict(self, data: pd.DataFrame) -> pd.DataFrame:
         # predict values and check error's limits
-        if self.generate_derivatives:
-            data = self._generate_derivatives(data)
         result = pd.DataFrame(index=data.index, columns=data.columns, data=0, dtype='uint8')
         x_ = data.copy()
         x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
