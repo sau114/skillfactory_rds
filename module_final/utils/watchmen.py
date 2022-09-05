@@ -4,13 +4,44 @@ import numpy as np
 import pandas as pd
 
 from sklearn.decomposition import IncrementalPCA
-from sklearn.ensemble import IsolationForest
+from sklearn.ensemble import IsolationForest, RandomForestRegressor, RandomForestClassifier
 from sklearn.linear_model import SGDRegressor, SGDClassifier
 from sklearn.preprocessing import StandardScaler
+
+from lightgbm import LGBMRegressor, LGBMClassifier
 
 
 class WatchmanError(ValueError):
     pass
+
+
+class Watchman:
+    # root class of watchmen
+
+    def __init__(self):
+        self.data_dtypes = None
+        pass
+
+    def _is_batch_satisfies(self, data_batch: pd.DataFrame) -> bool:
+        if self.data_dtypes is None:
+            self.data_dtypes = data_batch.dtypes
+            return True
+        return data_batch.dtypes.equals(self.data_dtypes)
+
+    def prefit(self, data_batch: pd.DataFrame) -> None:
+        if not self._is_batch_satisfies(data_batch):
+            raise WatchmanError('Batch is not correspond previous data')
+        pass
+
+    def fit(self, data_batch: pd.DataFrame) -> None:
+        if not self._is_batch_satisfies(data_batch):
+            raise WatchmanError('Batch is not correspond previous data')
+        pass
+
+    def detect(self, data_batch: pd.DataFrame) -> pd.Series:
+        if not self._is_batch_satisfies(data_batch):
+            raise WatchmanError('Batch is not correspond previous data')
+        return pd.Series(index=data_batch.index, data=0, dtype='uint8')
 
 
 class LimitWatchman:
@@ -182,14 +213,14 @@ class IsolatingWatchman:
     def __init__(self,
                  max_trees: int = 1000,
                  max_samples: int = 256,
-                 # max_features: float = 1.0,
+                 max_features: float = 1.0,
                  random_state: Optional[int] = None,
                  # contamination: Union[str, float] = 'auto',
                  generate_stat_features: bool = True,
                  ):
         self.forest = IsolationForest(n_estimators=0,
                                       max_samples=max_samples,
-                                      # max_features=max_features,
+                                      max_features=max_features,
                                       random_state=random_state,
                                       # contamination=contamination,
                                       n_jobs=-1,
@@ -316,6 +347,228 @@ class LinearPredictWatchman:
                 self.regressors[c].partial_fit(x, y)
             else:
                 self.regressors[c].partial_fit(x, y, classes=np.array([0, 1, 2]))
+            # compute predict errors
+            errors[c] = y - self.regressors[c].predict(x)
+        # update limits
+        center = (errors.max() + errors.min()) / 2
+        scope = (errors.max() - errors.min()) / 2
+        self.limits['lo'] = self.limits['lo'].combine(center - scope * (1 + tolerance), min)
+        self.limits['hi'] = self.limits['hi'].combine(center + scope * (1 + tolerance), max)
+        if self.spe_hi is not None:
+            self.spe_hi = max((errors**2).mean(axis=1).max() * (1 + tolerance), self.spe_hi)
+        return
+
+    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
+        # predict values and check error's limits
+        result = pd.DataFrame(index=data.index, columns=data.columns, data=0, dtype='uint8')
+        x_ = data.copy()
+        x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
+        x_ = x_.values
+        x = x_[:-1]  # without last row
+        errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
+        for j, c in enumerate(data.columns):
+            y = x_[1:, j]  # without first row
+            errors[c] = y - self.regressors[c].predict(x)
+        result.loc[data.index[1]:] = (errors < self.limits['lo']) | (errors > self.limits['hi'])
+        if self.spe_hi is not None:
+            spe = (errors**2).mean(axis=1)
+            result = result.assign(spe=0.0)
+            result.loc[data.index[1]:, 'spe'] = spe > self.spe_hi
+        result = result.astype('uint8')
+        return result
+
+
+class ForestPredictWatchman:
+    # using random forest regressors for predict next value and calc limits of error
+
+    def __init__(self,
+                 random_state: Optional[int] = None,
+                 also_compute_spe: bool = True,
+                 use_log_state: bool = False,
+                 max_trees: int = 100,
+                 ):
+        self.limits = None  # predict error limits
+        self.scaler = StandardScaler()  # need for spe
+        self.regressors = None
+        self.random_state = random_state
+        if also_compute_spe:
+            self.spe_hi = 0.0
+        else:
+            self.spe_hi = None
+        self.use_log = use_log_state
+        self.lin_columns = None
+        self.log_columns = None
+        self.max_trees = max_trees
+        return
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}(n_features={len(self.regressors)})'
+
+    def prefit(self, data: pd.DataFrame) -> None:
+        # create regressors
+        if self.regressors is None:
+            if self.use_log:
+                self.log_columns = [c for c in data.columns if c.endswith('_state')]
+                self.lin_columns = [c for c in data.columns if not c.endswith('_state')]
+            else:
+                self.lin_columns = [c for c in data.columns]
+            self.regressors = dict()
+            for c in data.columns:
+                if c in self.lin_columns:
+                    self.regressors[c] = RandomForestRegressor(
+                        n_estimators=0,
+                        criterion='squared_error',
+                        random_state=self.random_state,
+                        n_jobs=-1,
+                        warm_start=True,
+                    )
+                else:
+                    self.regressors[c] = RandomForestClassifier(
+                        n_estimators=0,
+                        criterion='gini',
+                        random_state=self.random_state,
+                        n_jobs=-1,
+                        warm_start=True,
+                    )
+        # create limits
+        if self.limits is None:
+            self.limits = pd.DataFrame(index=data.columns, columns=['lo', 'hi'])
+            self.limits['lo'] = 0.0
+            self.limits['hi'] = 0.0
+        # fit scaler
+        self.scaler.partial_fit(data[self.lin_columns])
+        return
+
+    def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.05, increment: int = 3) -> None:
+        # fit regressors on data
+        x_ = data.copy()
+        x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
+        x_ = x_.values
+        x = x_[:-1]  # without last row
+        errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
+        for j, c in enumerate(data.columns):
+            y = x_[1:, j]  # without first row
+            self.regressors[c].n_estimators = self.regressors[c].n_estimators + increment
+                # min(self.max_trees,
+                #                                   self.regressors[c].n_estimators + increment
+                #                                   )
+            if c in self.lin_columns:
+                self.regressors[c].fit(x, y)
+            else:
+                self.regressors[c].fit(x, y)
+            # compute predict errors
+            errors[c] = y - self.regressors[c].predict(x)
+        # update limits
+        center = (errors.max() + errors.min()) / 2
+        scope = (errors.max() - errors.min()) / 2
+        self.limits['lo'] = self.limits['lo'].combine(center - scope * (1 + tolerance), min)
+        self.limits['hi'] = self.limits['hi'].combine(center + scope * (1 + tolerance), max)
+        if self.spe_hi is not None:
+            self.spe_hi = max((errors**2).mean(axis=1).max() * (1 + tolerance), self.spe_hi)
+        return
+
+    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
+        # predict values and check error's limits
+        result = pd.DataFrame(index=data.index, columns=data.columns, data=0, dtype='uint8')
+        x_ = data.copy()
+        x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
+        x_ = x_.values
+        x = x_[:-1]  # without last row
+        errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
+        for j, c in enumerate(data.columns):
+            y = x_[1:, j]  # without first row
+            errors[c] = y - self.regressors[c].predict(x)
+        result.loc[data.index[1]:] = (errors < self.limits['lo']) | (errors > self.limits['hi'])
+        if self.spe_hi is not None:
+            spe = (errors**2).mean(axis=1)
+            result = result.assign(spe=0.0)
+            result.loc[data.index[1]:, 'spe'] = spe > self.spe_hi
+        result = result.astype('uint8')
+        return result
+
+
+class GbmPredictWatchman:
+    # using gradient boosting regressors for predict next value and calc limits of error
+
+    def __init__(self,
+                 random_state: Optional[int] = None,
+                 also_compute_spe: bool = True,
+                 use_log_state: bool = True,
+                 max_trees: int = 100,
+                 ):
+        self.limits = None  # predict error limits
+        self.scaler = StandardScaler()  # need for spe
+        self.regressors = None
+        self.random_state = random_state
+        if also_compute_spe:
+            self.spe_hi = 0.0
+        else:
+            self.spe_hi = None
+        self.use_log = use_log_state
+        self.lin_columns = None
+        self.log_columns = None
+        self.max_trees = max_trees
+        return
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}(n_features={len(self.regressors)})'
+
+    def prefit(self, data: pd.DataFrame) -> None:
+        # create regressors
+        if self.regressors is None:
+            if self.use_log:
+                self.log_columns = [c for c in data.columns if c.endswith('_state')]
+                self.lin_columns = [c for c in data.columns if not c.endswith('_state')]
+            else:
+                self.lin_columns = [c for c in data.columns]
+            self.regressors = dict()
+            for c in data.columns:
+                if c in self.lin_columns:
+                    self.regressors[c] = LGBMRegressor(
+                        random_state=self.random_state,
+                        n_jobs=-1,
+                    )
+                else:
+                    self.regressors[c] = LGBMClassifier(
+                        random_state=self.random_state,
+                        n_jobs=-1,
+                    )
+        # create limits
+        if self.limits is None:
+            self.limits = pd.DataFrame(index=data.columns, columns=['lo', 'hi'])
+            self.limits['lo'] = 0.0
+            self.limits['hi'] = 0.0
+        # fit scaler
+        self.scaler.partial_fit(data[self.lin_columns])
+        return
+
+    def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.05, increment: int = 3) -> None:
+        # fit regressors on data
+        x_ = data.copy()
+        x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
+        x_ = x_.values
+        x = x_[:-1]  # without last row
+        errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
+        for j, c in enumerate(data.columns):
+            y = x_[1:, j]  # without first row
+            # self.regressors[c].n_estimators = self.regressors[c].n_estimators + increment
+                # min(self.max_trees,
+                #                                   self.regressors[c].n_estimators + increment
+                #                                   )
+            if c in self.lin_columns:
+                try:
+                    self.regressors[c].best_iteration_
+                except:
+                    self.regressors[c].fit(x, y)
+                else:
+                    self.regressors[c].fit(x, y, init_model=self.regressors[c])
+            else:
+                try:
+                    self.regressors[c].best_iteration_
+                except:
+                    self.regressors[c].fit(x, y)
+                else:
+                    self.regressors[c].fit(x, y, init_model=self.regressors[c])
             # compute predict errors
             errors[c] = y - self.regressors[c].predict(x)
         # update limits
