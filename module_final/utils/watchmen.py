@@ -16,11 +16,14 @@ class WatchmanError(ValueError):
 
 
 class Watchman:
-    # root class of watchmen
+    # root class of Watchmen
 
     def __init__(self):
         self.data_dtypes = None
         pass
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}()'
 
     def _is_batch_satisfies(self, data_batch: pd.DataFrame) -> bool:
         if self.data_dtypes is None:

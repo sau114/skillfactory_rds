@@ -11,6 +11,51 @@ class DatasetError(ValueError):
     pass
 
 
+class BatchGenerator:
+
+    def __init__(self, batch_files: list):
+        self.batch_files = batch_files
+        pass
+
+    def __len__(self):
+        return len(self.batch_files)
+
+    def __iter__(self):
+        for filename in self.batch_files:
+            batch = pd.read_parquet(filename)
+            # parquet forgot frequency
+            batch.index.freq = f'{(batch.index[1] - batch.index[0]).seconds} s'
+            yield batch
+
+
+class Dataset:
+    # root class for Datasets
+
+    def __init__(self):
+        self.train_files = None
+        self.valid_files = None
+        self.test_files = None
+        pass
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}()'
+
+    def shake_not_stir(self):
+        self.train_files = []
+        self.valid_files = []
+        self.test_files = []
+        pass
+
+    def train_generator(self):
+        return BatchGenerator(self.train_files)
+
+    def valid_generator(self):
+        return BatchGenerator(self.valid_files)
+
+    def test_generator(self):
+        return BatchGenerator(self.test_files)
+
+
 def _scan_subdirs_for_snappy(root: str, subdirs: tuple) -> list:
     filepath_list = []
     for sd in subdirs:
