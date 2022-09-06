@@ -5,52 +5,35 @@
 
 # # Prepare
 
-# In[2]:
+# In[1]:
 
 
 # import libraries
-import json
 import os
 import os.path
 import pandas as pd
 import pyreadr
+from tqdm import tqdm
 
 
-# In[3]:
+# In[2]:
 
 
-# check memory usage
-import psutil
-
-
-# In[4]:
-
-
-DIR = 'E:\\Datasets\\TEP\\dataverse'  # dataset source dir
+SOURCE = 'Y:\\ZBU\\_Datasets\\TEP\\dataverse'  # dataset source dir
 R_FILES = ('TEP_FaultFree_Training.RData',  # datasets RData, sorted by size
            'TEP_FaultFree_Testing.RData',
            'TEP_Faulty_Training.RData',
            'TEP_Faulty_Testing.RData',
         )
-DTYPES_FILE = 'dtypes.json'  # dtypes of columns
-
-
-# In[5]:
-
-
-proc = psutil.Process(os.getpid())
-
-def print_memusage(prefix=''):
-# print memory usage info
-    print(prefix, f'{proc.memory_info().rss/1024**2:0.2f} MB')
+TARGET = 'E:\\Datasets\\TEP\\dataverse'
 
 
 # # Convert RData
 
-# In[6]:
+# In[3]:
 
 
-def clear_tags(df: pd.DataFrame) -> None:
+def rename_columns(df: pd.DataFrame) -> None:
     # rename columns
     rename_dict = {
         "xmeas_1": "inp_a_flow_ksm3h",
@@ -105,77 +88,106 @@ def clear_tags(df: pd.DataFrame) -> None:
         "xmv_9": "steam_feed_pc",
         "xmv_10": "re_cl_feed_pc",
         "xmv_11": "co_cl_feed_pc",
+        'sample': 'time',
+        'faultNumber': 'anomaly',
+        'simulationRun': 'run'
     }
-    
     df.rename(columns=rename_dict, inplace=True)
+    return
+
+
+# In[4]:
+
+
+def index_and_downsample(df: pd.DataFrame) -> None:
+    # set index
+    df['time'] = pd.to_datetime((df['time'].astype('int')-1)*3, unit='m', origin='2017-07-06T00:00:00')
+    df.set_index('time', inplace=True)
+    df.index.name = None
+    # downsample don't need
+    # df = df.resample('1 min').first()
+    return df
+
+
+# In[5]:
+
+
+def optimize_dtypes(df: pd.DataFrame) -> None:
+    # optimize dataframe by memory usage
+    uint_columns = [
+        'anomaly',
+        'run',
+    ]
+    float_columns = [c for c in df.columns if c not in uint_columns]
+    
+    df[uint_columns] = df[uint_columns].apply(pd.to_numeric, downcast='unsigned')
+    df[float_columns] = df[float_columns].apply(pd.to_numeric, downcast='float')
+    
+    return
+
+
+# In[6]:
+
+
+def split_n_save(df: pd.DataFrame, subdir: str) -> None:
+    outdir = os.path.join(TARGET, subdir)
+    if not os.path.isdir(outdir):
+        os.mkdir(outdir)
+    for anomaly in tqdm(df['anomaly'].unique()):
+        for run in df['run'].unique():
+            sub_df = df.query(f'anomaly=={anomaly} and run=={run}').drop(columns=['run'])
+            # mark normal period
+            if 'training' in subdir:
+                # first 1 hour
+                sub_df.loc[:'2017-07-06T01:00:00', 'anomaly'] = 0
+            elif 'testing' in subdir:
+                # first 8 hours
+                sub_df.loc[:'2017-07-06T08:00:00', 'anomaly'] = 0
+            fname = os.path.join(outdir, f'{subdir}_run_{run:03d}_fault_{anomaly:03d}.snappy')
+            sub_df.to_parquet(fname, compression='snappy')
     return
 
 
 # In[7]:
 
 
-def optimize_dtypes(df: pd.DataFrame) -> None:
-    # optimize dataframe by memory usage
-    uint_columns = df.columns.values[:3]  # this columns can be uint
-    float_columns = df.columns.values[3:]  # other must be float
-    
-    df[uint_columns] = df[uint_columns].apply(pd.to_numeric, downcast='unsigned')
-    df[float_columns] = df[float_columns].apply(pd.to_numeric, downcast='float')
-    
-    # saving our dtypes description for further use
-    dtypes_file = os.path.join(DIR, DTYPES_FILE)
-    if not os.path.isfile(dtypes_file):
-        # we need to create it
-        names = df.dtypes.index  # columns names
-        types = [c.name for c in df.dtypes]  # columns types
-        dtypes_dict = dict(zip(names, types))  # dict for pandas.read_csv
-        with open(dtypes_file, 'w') as f:
-            json.dump(dtypes_dict, f)
-        
-    return
+if not os.path.isdir(TARGET):
+    os.mkdir(os.path.join(TARGET))
 
+for f in R_FILES:
+    r_file = os.path.join(SOURCE, f)
+    r_data = pyreadr.read_r(r_file)
+    for k in r_data.keys():
+        print('Dataset', k, 'with shape', r_data[k].shape)
+        rename_columns(r_data[k])
+        index_and_downsample(r_data[k])
+        optimize_dtypes(r_data[k])
+        split_n_save(r_data[k], k)
+
+
+# In[11]:
+
+
+r_data['fault_free_training'].index
+
+
+# # Self-Check
 
 # In[8]:
 
 
-def split_n_save(df: pd.DataFrame, subdir: str) -> None:
-    outdir = os.path.join(DIR, subdir)
-    if not os.path.isdir(outdir):
-        os.mkdir(outdir)
-    
-    for flt in df['faultNumber'].unique():
-        for run in df['simulationRun'].unique():
-            sub_df = (df.query(f'faultNumber == {flt} and simulationRun == {run}')
-                        .drop(columns=['simulationRun'])
-                        .set_index('sample')
-                     )
-            fname = os.path.join(outdir, f'{subdir}_run_{run:03d}_fault_{flt:03d}.snappy')
-            sub_df.to_parquet(fname, compression='snappy')
-    
-    return
+data = pd.read_parquet(os.path.join(TARGET, 'fault_free_training', 'fault_free_training_run_001_fault_000.snappy'))
+data.info()
 
 
 # In[9]:
 
 
-print_memusage('Before loading')
-print()
+data.index
 
-for f in R_FILES:
-    r_file = os.path.join(DIR, f)
-    r_data = pyreadr.read_r(r_file)
-    print_memusage('After reading ' + f)
 
-    for k in r_data.keys():
-        print('Dataset', k, 'with shape', r_data[k].shape)
-        clear_tags(r_data[k])
-        optimize_dtypes(r_data[k])
-        print_memusage('After optimizing')
-        
-        split_n_save(r_data[k], k)
-        print_memusage("After split\'n\'saving")
-        
-    del r_data  # because need a lot of RAM
-    print_memusage('After deleting')
-    print()
+# In[ ]:
+
+
+
 

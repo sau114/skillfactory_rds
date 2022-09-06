@@ -11,445 +11,227 @@ class DatasetError(ValueError):
     pass
 
 
-class BatchGenerator:
+class BatchIterator:
 
     def __init__(self, batch_files: list):
         self.batch_files = batch_files
+        self.index = 0
         pass
 
     def __len__(self):
         return len(self.batch_files)
 
     def __iter__(self):
-        for filename in self.batch_files:
-            batch = pd.read_parquet(filename)
-            # parquet forgot frequency
-            batch.index.freq = f'{(batch.index[1] - batch.index[0]).seconds} s'
-            yield batch
+        return self
+
+    def __next__(self):
+        if self.index >= len(self.batch_files):
+            raise StopIteration
+        filename = self.batch_files[self.index]
+        batch = pd.read_parquet(filename)
+        # parquet forgot frequency
+        batch.index.freq = f'{(batch.index[1] - batch.index[0]).seconds} s'
+        # split to data and anomalies
+        anomalies = batch['anomaly']
+        data = batch.drop(columns=['anomaly'])
+        info = os.path.split(filename)[1]
+        self.index += 1
+        return data, anomalies, info
 
 
 class Dataset:
     # root class for Datasets
 
-    def __init__(self):
-        self.train_files = None
-        self.valid_files = None
-        self.test_files = None
-        pass
+    ROOT = 'a:\\datasets\\this_dataset'
 
-    def __repr__(self):
-        return f'{self.__class__.__name__}()'
+    def _check_required_subdirs(self):
+        subdirs = ('',)
+        for sd in subdirs:
+            if not os.path.isdir(os.path.join(self.ROOT, sd)):
+                raise DatasetError(f'Sub-directory {sd} is not available.')
+        return
 
-    def shake_not_stir(self):
+    def __init__(self, path: Optional[str] = None):
+        # common
+        if path is not None:
+            self.ROOT = path
+        if not os.path.isdir(self.ROOT):
+            raise DatasetError(f'Path {self.ROOT} is not available.')
+        # specific
+        self._check_required_subdirs()
+        # common
         self.train_files = []
         self.valid_files = []
         self.test_files = []
         pass
 
+    def __repr__(self):
+        return f'{self.__class__.__name__}({self.ROOT})'
+
+    def _list_subdirs_for(self, extension: str, subdirs: Optional[tuple]) -> list:
+        files_list = []
+        if subdirs is None:
+            subdirs = ('',)  # scan root
+        for sd in subdirs:
+            with os.scandir(os.path.join(self.ROOT, sd)) as it:
+                for entry in it:
+                    if entry.is_file() and entry.name.endswith(extension):
+                        files_list.append(entry.path)
+        return files_list
+
+    def _list_files_package(self, kind: str) -> list:
+        files_list = []
+        if kind == 'train':
+            pass
+        elif kind == 'valid':
+            pass
+        elif kind == 'test':
+            pass
+        else:
+            raise DatasetError(f'Unsupported kind of files: {kind}')
+        random.shuffle(files_list)
+        return files_list
+
+    def shake_not_stir(self,
+                       random_state: Optional[int] = None,
+                       valid2test_ratio: float = 0.3,
+                       ):
+        # common
+        random.seed(random_state)
+        # specific
+        train_files = self._list_files_package('train')
+        valid_files = self._list_files_package('valid')
+        test_files = self._list_files_package('test')
+        # common
+        self.train_files = train_files
+        n_valid = min(round(len(test_files) * valid2test_ratio), len(valid_files))
+        self.valid_files = random.sample(valid_files, k=n_valid)
+        self.test_files = test_files
+        pass
+
     def train_generator(self):
-        return BatchGenerator(self.train_files)
+        return BatchIterator(self.train_files)
 
     def valid_generator(self):
-        return BatchGenerator(self.valid_files)
+        return BatchIterator(self.valid_files)
 
     def test_generator(self):
-        return BatchGenerator(self.test_files)
+        return BatchIterator(self.test_files)
 
 
-def _scan_subdirs_for_snappy(root: str, subdirs: tuple) -> list:
-    filepath_list = []
-    for sd in subdirs:
-        with os.scandir(os.path.join(root, sd)) as it:
-            for entry in it:
-                if entry.name.endswith('.snappy') and entry.is_file():
-                    filepath_list.append(entry.path)
-    return filepath_list
-
-
-class GhlKasperskyDataset:
+class GhlKasperskyDataset(Dataset):
     # GHL dataset from Kaspersky Lab
 
-    _dt_origin = '2022-08-01T00:00:00'
+    ROOT = 'E:\\Datasets\\GHL'
 
-    def __init__(self,
-                 path: str = 'E:\\Datasets\\GHL',
-                 ):
-        # check path availability
-        self.path = None
-        if not os.path.isdir(path):
-            raise DatasetError(f'Path {path} is not available.')
-        else:
-            self.path = path
-        # check required sub-directories
+    def _check_required_subdirs(self):
         subdirs = ('train',
                    'test',
                    )
-        for d in subdirs:
-            if not os.path.isdir(os.path.join(self.path, d)):
-                raise DatasetError(f'Sub-directory {d} is not available.')
-        # lists of full path to files
-        self._train_files = []
-        self._valid_files = []
-        self._test_files = []
+        for sd in subdirs:
+            if not os.path.isdir(os.path.join(self.ROOT, sd)):
+                raise DatasetError(f'Sub-directory {sd} is not available.')
         return
 
-    def __repr__(self):
-        return f'{self.__class__.__name__}({self.path})'
-
-    def shake_not_stir(self,
-                       valid_test_ratio: float = 0.3,
-                       random_state: Optional[int] = None,
-                       ):
-        if isinstance(random_state, int):
-            random.seed(random_state)
-        # sub-directories with data
-        train_subdirs = ('train',)
-        test_subdirs = ('test',)
-        # list train series
-        filepath_list = _scan_subdirs_for_snappy(self.path, train_subdirs)
-        self._train_files = random.sample(filepath_list, k=len(filepath_list))
-        # list valid-test series
-        filepath_list = _scan_subdirs_for_snappy(self.path, test_subdirs)
-        random.shuffle(filepath_list)
-        n_valid_files = round(len(filepath_list) * valid_test_ratio)
-        self._valid_files = filepath_list[:n_valid_files]
-        self._test_files = filepath_list[n_valid_files:]
-        return
-
-    def train_generator(self) -> tuple:
-        # load train, prepare index
-        for filepath in self._train_files:
-            data = pd.read_parquet(filepath)
-            data.index.name = None
-            data.index = pd.to_datetime(data.index.values, unit='m', origin=self._dt_origin)
-            data.index.freq = '1 min'
-            anomalies = data['attack'].rename('anomaly')
-            data.drop(columns=['attack'], inplace=True)
-            filename = os.path.split(filepath)[1]
-            # split one long series by 25 hours
-            step = 25 * 60
-            for i in range(0, len(data.index), step):
-                yield data.iloc[i:i+step], anomalies.iloc[i:i+step], filename
-
-    def valid_generator(self) -> tuple:
-        # load valid, prepare index
-        for filepath in self._valid_files:
-            data = pd.read_parquet(filepath)
-            data.index.name = None
-            data.index = pd.to_datetime(data.index.values, unit='m', origin=self._dt_origin)
-            data.index.freq = '1 min'
-            anomalies = data['attack'].rename('anomaly')
-            data.drop(columns=['attack'], inplace=True)
-            filename = os.path.split(filepath)[1]
-            yield data, anomalies, filename
-
-    def test_generator(self) -> tuple:
-        # load valid, prepare index
-        for filepath in self._test_files:
-            data = pd.read_parquet(filepath)
-            data.index.name = None
-            data.index = pd.to_datetime(data.index.values, unit='m', origin=self._dt_origin)
-            data.index.freq = '1 min'
-            anomalies = data['attack'].rename('anomaly')
-            data.drop(columns=['attack'], inplace=True)
-            filename = os.path.split(filepath)[1]
-            yield data, anomalies, filename
+    def _list_files_package(self, kind: str) -> list:
+        if kind == 'train':
+            files_list = self._list_subdirs_for('.snappy', subdirs=('train',))
+        elif kind == 'valid':
+            files_list = self._list_subdirs_for('.snappy', subdirs=('test',))
+        elif kind == 'test':
+            files_list = self._list_subdirs_for('.snappy', subdirs=('test',))
+        else:
+            raise DatasetError(f'Unsupported kind of files: {kind}')
+        random.shuffle(files_list)
+        return files_list
 
 
-class TepHarvardDataset:
+class TepHarvardDataset(Dataset):
     # TEP dataset from Harvard Dataverse
 
-    _dt_origin = '2022-08-01T00:00:00'
+    ROOT = 'E:\\Datasets\\TEP\\dataverse'
 
-    def __init__(self,
-                 path: str = 'E:\\Datasets\\TEP\\dataverse',
-                 ):
-        # check path availability
-        self.path = None
-        if not os.path.isdir(path):
-            raise DatasetError(f'Path {path} is not available.')
-        else:
-            self.path = path
-        # check required sub-directories
+    def _check_required_subdirs(self):
         subdirs = ('fault_free_training',
                    'fault_free_testing',
                    'faulty_training',
                    'faulty_testing',
                    )
-        for d in subdirs:
-            if not os.path.isdir(os.path.join(self.path, d)):
-                raise DatasetError(f'Sub-directory {d} is not available.')
-        # lists of full path to files
-        self._train_files = []
-        self._valid_files = []
-        self._test_files = []
+        for sd in subdirs:
+            if not os.path.isdir(os.path.join(self.ROOT, sd)):
+                raise DatasetError(f'Sub-directory {sd} is not available.')
         return
 
-    def __repr__(self):
-        return f'{self.__class__.__name__}({self.path})'
-
-    def shake_not_stir(self,
-                       valid_test_ratio: float = 1.0,
-                       random_state: Optional[int] = None,
-                       balanced_test: bool = False,
-                       ):
-        if isinstance(random_state, int):
-            random.seed(random_state)
-        # kwarg only_normal_train
-        train_subdirs = ('fault_free_training',
-                         )
-        valid_subdirs = ('faulty_training',
-                         )
-        test_subdirs = ('fault_free_testing',
-                        'faulty_testing',
-                        )
-        # list train-valid series
-        filepath_list = _scan_subdirs_for_snappy(self.path, train_subdirs)
-        self._train_files = random.sample(filepath_list, k=len(filepath_list))
-        # list testing series
-        filepath_list = _scan_subdirs_for_snappy(self.path, test_subdirs)
-        if balanced_test:
-            files_norm = [f for f in filepath_list if 'fault_free' in f]
-            files_anom = [f for f in filepath_list if 'faulty' in f]
-            n_balance = min(len(files_norm), len(files_anom))
-            files_norm = random.sample(files_norm, k=n_balance)
-            files_anom = random.sample(files_anom, k=n_balance)
-            filepath_list = files_norm + files_anom
-        self._test_files = random.sample(filepath_list, k=len(filepath_list))
-        # list validation series
-        filepath_list = _scan_subdirs_for_snappy(self.path, valid_subdirs)
-        n_valid = min(round(len(self._test_files) * valid_test_ratio), len(filepath_list))
-        self._valid_files = random.sample(filepath_list, k=n_valid)
-        return
-
-    def train_generator(self) -> tuple:
-        # load train, prepare index
-        for filepath in self._train_files:
-            data = pd.read_parquet(filepath)
-            data.index.name = None
-            # dataset-specific: for train first 1 h (20 * 3 min) always normal
-            data.loc[1:20, 'faultNumber'] = 0
-            data.index = pd.to_datetime((data.index-1)*3, unit='m', origin=self._dt_origin)
-            data.index.freq = '3 min'
-            anomalies = data['faultNumber'].rename('anomaly')
-            data.drop(columns=['faultNumber'], inplace=True)
-            filename = os.path.split(filepath)[1]
-            yield data, anomalies, filename
-
-    def valid_generator(self) -> tuple:
-        # load valid, prepare index
-        for filepath in self._valid_files:
-            data = pd.read_parquet(filepath)
-            data.index.name = None
-            # dataset-specific: for valid first 1 h (20 * 3 min) always normal
-            data.loc[1:20, 'faultNumber'] = 0
-            data.index = pd.to_datetime((data.index-1)*3, unit='m', origin=self._dt_origin)
-            data.index.freq = '3 min'
-            anomalies = data['faultNumber'].rename('anomaly')
-            data.drop(columns=['faultNumber'], inplace=True)
-            filename = os.path.split(filepath)[1]
-            yield data, anomalies, filename
-
-    def test_generator(self) -> tuple:
-        # load test, prepare index
-        for filepath in self._test_files:
-            data = pd.read_parquet(filepath)
-            data.index.name = None
-            # dataset-specific
-            # for train first 8 h (160 * 3 min) always normal
-            data.loc[1:160, 'faultNumber'] = 0
-            data.index = pd.to_datetime((data.index-1)*3, unit='m', origin=self._dt_origin)
-            data.index.freq = '3 min'
-            anomalies = data['faultNumber'].rename('anomaly')
-            data.drop(columns=['faultNumber'], inplace=True)
-            filename = os.path.split(filepath)[1]
-            yield data, anomalies, filename
+    def _list_files_package(self, kind: str) -> list:
+        if kind == 'train':
+            files_list = self._list_subdirs_for('.snappy', subdirs=('fault_free_training',))
+        elif kind == 'valid':
+            files_list = self._list_subdirs_for('.snappy', subdirs=('faulty_training',))
+        elif kind == 'test':
+            files_list = self._list_subdirs_for('.snappy', subdirs=('fault_free_testing', 'faulty_testing'))
+        else:
+            raise DatasetError(f'Unsupported kind of files: {kind}')
+        random.shuffle(files_list)
+        return files_list
 
 
-class TepKasperskyDataset:
+class TepKasperskyDataset(Dataset):
     # TEP dataset from Kaspersky Lab
 
-    _dt_origin = '2022-08-01T00:00:00'
+    ROOT = 'E:\\Datasets\\TEP\\kaspersky'
 
-    def __init__(self,
-                 path: str = 'E:\\Datasets\\TEP\\kaspersky',
-                 ):
-        # check path availability
-        self.path = None
-        if not os.path.isdir(path):
-            raise DatasetError(f'Path {path} is not available.')
+    def _check_required_subdirs(self):
+        subdirs = ('_pretreated',
+                   )
+        for sd in subdirs:
+            if not os.path.isdir(os.path.join(self.ROOT, sd)):
+                raise DatasetError(f'Sub-directory {sd} is not available.')
+        return
+
+    def _list_files_package(self, kind: str) -> list:
+        files_list = self._list_subdirs_for('.snappy', subdirs=('_pretreated',))
+        single_state_list = [f for f in files_list if 'single_state_mode' in f]  # 200
+        transient_list = [f for f in files_list if 'transient_mode' in f]  # 346
+        attack_list = [f for f in files_list if 'attack_mode' in f]  # 142
+        if kind == 'train':
+            # equal from single_state and transient
+            n_transient = min(len(transient_list), len(single_state_list))
+            files_list = single_state_list + random.sample(transient_list, k=n_transient)
+        elif kind == 'valid':
+            # equal from transient and attack
+            n_valid = min(len(transient_list), len(attack_list))
+            files_list = random.sample(transient_list, k=n_valid) + random.sample(attack_list, k=n_valid)
+        elif kind == 'test':
+            # all from transient and attack
+            files_list = transient_list + attack_list
         else:
-            self.path = path
-        # check required sub-directories
-        subdirs = ('_pretreated',
-                   )
-        for d in subdirs:
-            if not os.path.isdir(os.path.join(self.path, d)):
-                raise DatasetError(f'Sub-directory {d} is not available.')
-        # lists of full path to files
-        self._train_files = []
-        self._valid_files = []
-        self._test_files = []
-        return
-
-    def __repr__(self):
-        return f'{self.__class__.__name__}({self.path})'
-
-    def shake_not_stir(self,
-                       valid_test_ratio: float = 0.3,
-                       random_state: Optional[int] = None,
-                       ):
-        if isinstance(random_state, int):
-            random.seed(random_state)
-        # kwarg only_normal_train
-        subdirs = ('_pretreated',
-                   )
-        # split full list by types
-        filepath_list = _scan_subdirs_for_snappy(self.path, subdirs)
-        single_state_list = [f for f in filepath_list if 'single_state_mode' in f]  # 200
-        transient_list = [f for f in filepath_list if 'transient_mode' in f]  # 346
-        attack_list = [f for f in filepath_list if 'attack_mode' in f]  # 142
-        random.shuffle(transient_list)
-        random.shuffle(attack_list)
-        # train series
-        n_trans2train = len(single_state_list)
-        train_list = single_state_list + transient_list[:n_trans2train]
-        self._train_files = random.sample(train_list, k=len(train_list))
-        # list validation series
-        n_tran2valid = round((len(transient_list) - n_trans2train) * valid_test_ratio)
-        n_attack2valid = round(len(attack_list) * valid_test_ratio)
-        valid_list = transient_list[n_trans2train:n_trans2train+n_tran2valid] + attack_list[:n_attack2valid]
-        self._valid_files = random.sample(valid_list, k=len(valid_list))
-        # list testing series
-        test_list = transient_list[n_trans2train+n_tran2valid:] + attack_list[n_attack2valid:]
-        self._test_files = random.sample(test_list, k=len(test_list))
-        return
-
-    def train_generator(self) -> tuple:
-        # load train, prepare index
-        for filepath in self._train_files:
-            data = pd.read_parquet(filepath)
-            data.index.name = None
-            data.index.freq = '1 min'
-            anomalies = data['attack'].rename('anomaly')
-            data.drop(columns=['attack'], inplace=True)
-            filename = os.path.split(filepath)[1]
-            yield data, anomalies, filename
-
-    def valid_generator(self) -> tuple:
-        # load valid, prepare index
-        for filepath in self._valid_files:
-            data = pd.read_parquet(filepath)
-            data.index.name = None
-            data.index.freq = '1 min'
-            anomalies = data['attack'].rename('anomaly')
-            data.drop(columns=['attack'], inplace=True)
-            filename = os.path.split(filepath)[1]
-            yield data, anomalies, filename
-
-    def test_generator(self) -> tuple:
-        # load test, prepare index
-        for filepath in self._test_files:
-            data = pd.read_parquet(filepath)
-            data.index.name = None
-            data.index.freq = '1 min'
-            anomalies = data['attack'].rename('anomaly')
-            data.drop(columns=['attack'], inplace=True)
-            filename = os.path.split(filepath)[1]
-            yield data, anomalies, filename
+            raise DatasetError(f'Unsupported kind of files: {kind}')
+        random.shuffle(files_list)
+        return files_list
 
 
-class SwatItrustDataset:
+class SwatItrustDataset(Dataset):
     # SWaT dataset from iTrust
 
-    def __init__(self,
-                 path: str = 'E:\\Datasets\\SWaT\\dataset12',
-                 ):
-        # check path availability
-        self.path = None
-        if not os.path.isdir(path):
-            raise DatasetError(f'Path {path} is not available.')
+    ROOT = 'E:\\Datasets\\SWaT\\datasetA1'
+
+    def _check_required_subdirs(self):
+        subdirs = ('',
+                   )
+        for sd in subdirs:
+            if not os.path.isdir(os.path.join(self.ROOT, sd)):
+                raise DatasetError(f'Sub-directory {sd} is not available.')
+        return
+
+    def _list_files_package(self, kind: str) -> list:
+        files_list = self._list_subdirs_for('.snappy', subdirs=('',))
+        if kind == 'train':
+            files_list = [f for f in files_list if 'SWaT_Dataset_Normal' in f]
+        elif kind == 'valid':
+            files_list = [f for f in files_list if 'SWaT_Dataset_Attack' in f]
+        elif kind == 'test':
+            files_list = [f for f in files_list if 'SWaT_Dataset_Attack' in f]
         else:
-            self.path = path
-        # check required sub-directories
-        # subdirs = ('dataset12',
-        #            )
-        # for d in subdirs:
-        #     if not os.path.isdir(os.path.join(self.path, d)):
-        #         raise DatasetError(f'Sub-directory {d} is not available.')
-        # lists of full path to files
-        self._train_files = []
-        self._valid_files = []
-        self._test_files = []
-        # dataset-specific
-        self._valid_test_ratio = None
-        return
-
-    def __repr__(self):
-        return f'{self.__class__.__name__}({self.path})'
-
-    def shake_not_stir(self,
-                       valid_test_ratio: float = 0.3,
-                       random_state: Optional[int] = None,
-                       ):
-        if isinstance(random_state, int):
-            random.seed(random_state)
-        # sub-directories with data
-        train_files = ('SWaT_Dataset_Normal_v1.snappy',
-                       # 'SWaT_Dataset_Normal_v0.snappy',
-                       )
-        test_files = ('SWaT_Dataset_Attack_v0.snappy',
-                      )
-        # list train series
-        self._train_files = [os.path.join(self.path, f) for f in train_files]
-        # list valid-test series
-        self._valid_files = [os.path.join(self.path, f) for f in test_files]
-        self._valid_test_ratio = valid_test_ratio
-        self._test_files = [os.path.join(self.path, f) for f in test_files]
-        return
-
-    def train_generator(self) -> tuple:
-        # load train, prepare index
-        for filepath in self._train_files:
-            data = pd.read_parquet(filepath)
-            data.index.name = None
-            data.index.freq = '1 min'
-            anomalies = data['attack'].rename('anomaly')
-            data.drop(columns=['attack'], inplace=True)
-            filename = os.path.split(filepath)[1]
-            # split one long series by 24 hours
-            step = 24 * 60
-            for i in range(0, len(data.index), step):
-                yield data.iloc[i:i+step], anomalies.iloc[i:i+step], filename
-
-    def valid_generator(self) -> tuple:
-        # load valid, prepare index
-        for filepath in self._valid_files:
-            data = pd.read_parquet(filepath)
-            n_valid = round(data.shape[0] * self._valid_test_ratio)
-            data = data.iloc[:n_valid].copy()
-            data.index.name = None
-            data.index.freq = '1 min'
-            anomalies = data['attack'].rename('anomaly')
-            data.drop(columns=['attack'], inplace=True)
-            filename = os.path.split(filepath)[1]
-            # split one long series by 24 hours
-            step = 24 * 60
-            for i in range(0, len(data.index), step):
-                yield data.iloc[i:i+step], anomalies.iloc[i:i+step], filename
-
-    def test_generator(self) -> tuple:
-        # load valid, prepare index
-        for filepath in self._valid_files:
-            data = pd.read_parquet(filepath)
-            n_valid = round(data.shape[0] * self._valid_test_ratio)
-            data = data.iloc[n_valid:].copy()
-            data.index.name = None
-            data.index.freq = '1 min'
-            anomalies = data['attack'].rename('anomaly')
-            data.drop(columns=['attack'], inplace=True)
-            filename = os.path.split(filepath)[1]
-            # split one long series by 24 hours
-            step = 24 * 60
-            for i in range(0, len(data.index), step):
-                yield data.iloc[i:i+step], anomalies.iloc[i:i+step], filename
+            raise DatasetError(f'Unsupported kind of files: {kind}')
+        random.shuffle(files_list)
+        return files_list
