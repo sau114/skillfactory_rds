@@ -18,33 +18,69 @@ class WatchmanError(ValueError):
 class Watchman:
     # root class of Watchmen
 
-    def __init__(self):
-        self.data_dtypes = None
-        pass
+    def __init__(self,
+                 random_state: Optional[int] = None,
+                 **kwargs,
+                 ):
+        # common
+        self.data_dtypes = pd.Series()  # names and types of data features
+        self.limits = dict()  # all limits for predict anomalies
+        self.random_state = random_state  # random seed for everybody
+        # specific
+        self._init_specific(random_state, **kwargs)
+        return
 
     def __repr__(self):
-        return f'{self.__class__.__name__}()'
+        return f'{self.__class__.__name__}(n_features={self.data_dtypes.shape[0]})'
 
-    def _is_batch_satisfies(self, data_batch: pd.DataFrame) -> bool:
+    def _check_compliance(self,
+                          data_batch: pd.DataFrame,
+                          ) -> None:
         if self.data_dtypes is None:
             self.data_dtypes = data_batch.dtypes
-            return True
-        return data_batch.dtypes.equals(self.data_dtypes)
-
-    def prefit(self, data_batch: pd.DataFrame) -> None:
-        if not self._is_batch_satisfies(data_batch):
+            return
+        if not data_batch.dtypes.equals(self.data_dtypes):
             raise WatchmanError('Batch is not correspond previous data')
+        return
+
+    def prefit(self,
+               data_batch: pd.DataFrame,
+               ) -> None:
+        # common
+        self._check_compliance(data_batch)
+        # fit scaler
+        # fit method
+        # fit feature generator
+        return
+
+    def partial_fit(self,
+                    data_batch: pd.DataFrame,
+                    **kwargs,
+                    ) -> None:
+        # common
+        self._check_compliance(data_batch)
+        # scale batch
+        # generate features
+        # partial fit
         pass
 
-    def fit(self, data_batch: pd.DataFrame) -> None:
-        if not self._is_batch_satisfies(data_batch):
-            raise WatchmanError('Batch is not correspond previous data')
-        pass
-
-    def detect(self, data_batch: pd.DataFrame) -> pd.Series:
-        if not self._is_batch_satisfies(data_batch):
-            raise WatchmanError('Batch is not correspond previous data')
-        return pd.Series(index=data_batch.index, data=0, dtype='uint8')
+    def predict(self,
+                data_batch: pd.DataFrame,
+                tolerance: float = 0.05,
+                reduce: bool = False,
+                **kwargs,
+                ) -> pd.Series:
+        # common
+        self._check_compliance(data_batch)
+        # scale batch
+        # generate features
+        # predict
+        # specific
+        result = pd.DataFrame(index=data_batch.index, columns=('detect',), data=0, dtype='uint8')
+        # common
+        if reduce:
+            result = result.any(axis=1)
+        return result
 
 
 class LimitWatchman:
@@ -60,7 +96,7 @@ class LimitWatchman:
         return f'{self.__class__.__name__}(ewma={self.ewma})'
 
     def prefit(self, data: pd.DataFrame) -> None:
-        # nothng
+        # nothing
         return
 
     def partial_fit(self,
