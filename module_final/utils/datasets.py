@@ -52,14 +52,11 @@ class Dataset:
         return
 
     def __init__(self, path: Optional[str] = None):
-        # common
         if path is not None:
             self.ROOT = path
         if not os.path.isdir(self.ROOT):
             raise DatasetError(f'Path {self.ROOT} is not available.')
-        # specific
         self._check_required_subdirs()
-        # common
         self.train_files = []
         self.valid_files = []
         self.test_files = []
@@ -96,13 +93,10 @@ class Dataset:
                        random_state: Optional[int] = None,
                        valid2test_ratio: float = 0.3,
                        ):
-        # common
         random.seed(random_state)
-        # specific
         train_files = self._list_files_package('train')
         valid_files = self._list_files_package('valid')
         test_files = self._list_files_package('test')
-        # common
         self.train_files = train_files
         n_valid = min(round(len(test_files) * valid2test_ratio), len(valid_files))
         self.valid_files = random.sample(valid_files, k=n_valid)

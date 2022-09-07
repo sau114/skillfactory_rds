@@ -18,16 +18,18 @@ class WatchmanError(ValueError):
 class Watchman:
     # root class of Watchmen
 
+    def _init(self, **kwargs):
+        self.scaler = None  # transform data in same dimension
+        pass
+
     def __init__(self,
                  random_state: Optional[int] = None,
                  **kwargs,
                  ):
-        # common
-        self.data_dtypes = pd.Series()  # names and types of data features
+        self.data_dtypes = None  # names and types of data features
         self.limits = dict()  # all limits for predict anomalies
         self.random_state = random_state  # random seed for everybody
-        # specific
-        self._init_specific(random_state, **kwargs)
+        self._init(**kwargs)
         return
 
     def __repr__(self):
@@ -43,206 +45,198 @@ class Watchman:
             raise WatchmanError('Batch is not correspond previous data')
         return
 
+    def _scaler_partial_fit(self, data: pd.DataFrame) -> None:
+        # partial fit
+        if self.scaler is not None:
+            self.scaler.partial_fit(data.values)
+        return
+
+    def _scaler_transform(self, data: pd.DataFrame) -> np.ndarray:
+        # transform data
+        if self.scaler is None:
+            return data.values
+        return self.scaler.transform(data.values)
+
+    def _scaler_inverse_transform(self, data: np.ndarray) -> np.ndarray:
+        # inverse transform data
+        if self.scaler is None:
+            return data
+        return self.scaler.inverse_transform(data)
+
+    def _prefit(self,
+                data: np.ndarray,
+                **kwargs,
+                ) -> None:
+        # fit transformers
+        # fit feature generators
+        return
+
     def prefit(self,
                data_batch: pd.DataFrame,
+               **kwargs,
                ) -> None:
-        # common
         self._check_compliance(data_batch)
-        # fit scaler
-        # fit method
-        # fit feature generator
+        self._scaler_partial_fit(data_batch)
+        data_scaled = self._scaler_transform(data_batch)
+        self._prefit(data_scaled, **kwargs)
+        return
+
+    def _partial_fit(self,
+                     data: np.ndarray,
+                     **kwargs,
+                     ) -> None:
+        # transform data
+        # generate features
+        # fit forecasters
+        # store limits
         return
 
     def partial_fit(self,
                     data_batch: pd.DataFrame,
                     **kwargs,
                     ) -> None:
-        # common
         self._check_compliance(data_batch)
-        # scale batch
-        # generate features
-        # partial fit
+        data_scaled = self._scaler_transform(data_batch)
+        self._partial_fit(data_scaled, **kwargs)
         pass
+
+    def _predict(self,
+                 data: np.ndarray,
+                 **kwargs,
+                 ) -> np.ndarray:
+        # transform data
+        # generate features
+        # use forecasters
+        # check limits
+        result = np.zeros_like(data, dtype=np.uint8)  # dummy predict
+        return result
 
     def predict(self,
                 data_batch: pd.DataFrame,
-                tolerance: float = 0.05,
                 reduce: bool = False,
                 **kwargs,
                 ) -> pd.Series:
         # common
         self._check_compliance(data_batch)
-        # scale batch
-        # generate features
-        # predict
-        # specific
-        result = pd.DataFrame(index=data_batch.index, columns=('detect',), data=0, dtype='uint8')
-        # common
+        data_scaled = self._scaler_transform(data_batch)
+        result = pd.DataFrame(index=data_batch.index, data=self._predict(data_scaled, **kwargs), dtype='uint8')
+        if result.shape[1] == data_batch.shape[1]:  # same number of columns
+            result.columns = data_batch.columns
         if reduce:
             result = result.any(axis=1)
         return result
 
 
-class LimitWatchman:
-    # On learn - store limit values with tolerance.
-    # On examine - values must be in limits.
+class DirectLimitWatchman(Watchman):
+    # Checking limits of features directly
 
-    def __init__(self, ewma: Optional[str] = None):
-        self.limits = None
-        self.ewma = ewma
-        return
+    def _init(self, **kwargs):
+        self.scaler = None  # scaler is not used
+        pass
 
-    def __repr__(self):
-        return f'{self.__class__.__name__}(ewma={self.ewma})'
-
-    def prefit(self, data: pd.DataFrame) -> None:
+    def _prefit(self,
+                data: np.ndarray,
+                **kwargs,
+                ) -> None:
         # nothing
         return
 
-    def partial_fit(self,
-                    data: pd.DataFrame,
-                    tolerance: float = 0.05) -> None:
-        # learn and store limits of this data
-        # watchman don't forget previous limits
-        if self.limits is None:
-            self.limits = pd.DataFrame(index=data.columns, columns=['lo', 'hi'])
-            self.limits['lo'] = data.min()
-            self.limits['hi'] = data.max()
-        elif not self.limits.index.equals(data.columns):
-            raise WatchmanError('Fields of limits is not equals to data columns')
-        if self.ewma is not None:
-            data = data.ewm(halflife=self.ewma, times=data.index.values).mean()
-        mean = (data.max() + data.min()) / 2
-        half_range = (data.max() - data.min()) / 2
-        self.limits['lo'] = self.limits['lo'].combine(mean - half_range * (1 + tolerance), min)
-        self.limits['hi'] = self.limits['hi'].combine(mean + half_range * (1 + tolerance), max)
+    def _partial_fit(self,
+                     data: np.ndarray,
+                     **kwargs,
+                     ) -> None:
+        # store features limits
+        data_min = data.min(axis=0, initial=None)
+        data_max = data.max(axis=0, initial=None)
+        if self.limits:
+            self.limits['lo'] = np.fmin(self.limits['lo'], data_min)
+            self.limits['hi'] = np.fmax(self.limits['hi'], data_max)
+        else:
+            # initialize empty dict by min and max features
+            self.limits['lo'] = data_min
+            self.limits['hi'] = data_max
         return
 
-    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
-        # examine this data for anomalies
-        if self.ewma is not None:
-            data = data.ewm(halflife=self.ewma, times=data.index.values).mean()
-        result = (data < self.limits['lo']) | (data > self.limits['hi'])
-        result = result.astype('uint8')
+    def _predict(self,
+                 data: np.ndarray,
+                 tolerance: float = 0.02,
+                 **kwargs,
+                 ) -> np.ndarray:
+        # check features limits with tolerance
+        limits_center = (self.limits['hi'] + self.limits['lo']) / 2
+        limits_scope = (self.limits['hi'] - self.limits['lo']) / 2
+        limits_hi = limits_center + limits_scope * (1 + tolerance)
+        limits_lo = limits_center - limits_scope * (1 + tolerance)
+        result = (data < limits_lo) | (data > limits_hi)
         return result
 
 
-class LimitPcaWatchman:
-    # Same as LimitWatchman, but in space of principal components.
+class PcaLimitWatchman(Watchman):
+    # Checking limits of features in principal components space
+    # Also check high limit of presentation mean squared error (PMSE)
 
-    def __init__(self, n_components: int):
-        self.limits = None
-        self.scaler = StandardScaler()
-        self.n_components = n_components
-        self.pca = IncrementalPCA(n_components=self.n_components)
-        return
+    def _init(self,
+              n_components: int = 3,
+              **kwargs):
+        self.scaler = StandardScaler()  # preparing before pca
+        self.transformer = IncrementalPCA(n_components=n_components)
+        pass
 
-    def __repr__(self):
-        return f'{self.__class__.__name__}(n_components={self.n_components})'
-
-    def prefit(self, data: pd.DataFrame) -> None:
-        self.scaler.partial_fit(data)
-        self.pca.partial_fit(self.scaler.transform(data))
-        return
-
-    def get_pca_scree(self) -> pd.Series:
-        scree = pd.Series(index=range(1, self.pca.n_components_ + 1),
-                          data=self.pca.explained_variance_ratio_,
+    def explain_transformer(self) -> pd.Series:
+        # scree of PCA for selecting the number of components
+        scree = pd.Series(index=range(1, self.transformer.n_components_ + 1),
+                          data=self.transformer.explained_variance_ratio_,
                           )
         return scree
 
-    def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.01) -> None:
-        # learn and store limits of this data
-        # watchman don't forget previous limits
-        pc_names = tuple('pc' + str(i) for i in range(self.pca.n_components))
-        pc_data = pd.DataFrame(index=data.index,
-                               columns=pc_names,
-                               data=self.pca.transform(self.scaler.transform(data)),
-                               )
-        if self.limits is None:
-            self.limits = pd.DataFrame(index=pc_data.columns, columns=['lo', 'hi'])
-            self.limits['lo'] = pc_data.min()
-            self.limits['hi'] = pc_data.max()
-        elif not self.limits.index.equals(pc_data.columns):
-            raise WatchmanError('Fields of limits is not equals to data columns')
-        mean = (pc_data.max() + pc_data.min()) / 2
-        half_range = (pc_data.max() - pc_data.min()) / 2
-        self.limits['lo'] = self.limits['lo'].combine(mean - half_range * (1 + tolerance), min)
-        self.limits['hi'] = self.limits['hi'].combine(mean + half_range * (1 + tolerance), max)
+    def _prefit(self,
+                data: np.ndarray,
+                **kwargs,
+                ) -> None:
+        self.transformer.partial_fit(data)
         return
 
-    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
-        # examine this data for anomalies
-        pc_names = tuple('pc' + str(i) for i in range(self.pca.n_components))
-        pc_data = pd.DataFrame(index=data.index,
-                               columns=pc_names,
-                               data=self.pca.transform(self.scaler.transform(data)),
-                               )
-        result = (pc_data < self.limits['lo']) | (pc_data > self.limits['hi'])
-        result = result.astype('uint8')
-        return result
-
-
-class SpePcaWatchman:
-    # Same as LimitPcaWatchman, but watch only for square prediction error (SPE) aka Q statistic.
-
-    def __init__(self, n_components: int):
-        self.limits = None
-        self.scaler = StandardScaler()
-        self.n_components = n_components
-        self.pca = IncrementalPCA(n_components=self.n_components)
+    def _partial_fit(self,
+                     data: np.ndarray,
+                     **kwargs,
+                     ) -> None:
+        # transform to another space
+        data_t = self.transformer.transform(data)
+        # store features limits in new space
+        data_t_min = data_t.min(axis=0, initial=None)
+        data_t_max = data_t.max(axis=0, initial=None)
+        # compute only high limit of PMSE, because data is scaled
+        data_r = self.transformer.inverse_transform(data_t)  # restored data
+        pmse_max = ((data - data_r) ** 2).mean(axis=1).max()
+        if self.limits:
+            self.limits['lo'] = np.fmin(self.limits['lo'], data_t_min)
+            self.limits['hi'] = np.fmax(self.limits['hi'], data_t_max)
+            self.limits['pmse'] = max(self.limits['pmse'], pmse_max)
+        else:
+            # initialize empty dict by min and max features
+            self.limits['lo'] = data_t_min
+            self.limits['hi'] = data_t_max
+            self.limits['pmse'] = pmse_max
         return
 
-    def __repr__(self):
-        return f'{self.__class__.__name__}(n_components={self.n_components})'
-
-    def prefit(self, data: pd.DataFrame) -> None:
-        self.scaler.partial_fit(data)
-        self.pca.partial_fit(self.scaler.transform(data))
-        return
-
-    def get_pca_scree(self) -> pd.Series:
-        scree = pd.Series(index=range(1, self.pca.n_components_ + 1),
-                          data=self.pca.explained_variance_ratio_,
-                          )
-        return scree
-
-    def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.05) -> None:
-        # learn and store limits of this data
-        # watchman don't forget previous limits
-        scaled_data = pd.DataFrame(index=data.index,
-                                   columns=data.columns,
-                                   data=self.scaler.transform(data),
-                                   )
-        restored_data = pd.DataFrame(index=data.index,
-                                     columns=data.columns,
-                                     data=self.pca.inverse_transform(self.pca.transform(scaled_data.values)),
-                                     )
-        spe = ((scaled_data - restored_data) ** 2).mean(axis=1)
-        if self.limits is None:
-            self.limits = {
-                'lo': spe.min(),
-                'hi': spe.max(),
-            }
-        mean = (spe.max() + spe.min()) / 2
-        half_range = (spe.max() - spe.min()) / 2
-        self.limits['lo'] = min(self.limits['lo'], mean - half_range * (1 + tolerance))
-        self.limits['hi'] = max(self.limits['hi'], mean + half_range * (1 + tolerance))
-        return
-
-    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
-        # examine this data for anomalies
-        scaled_data = pd.DataFrame(index=data.index,
-                                   columns=data.columns,
-                                   data=self.scaler.transform(data),
-                                   )
-        restored_data = pd.DataFrame(index=data.index,
-                                     columns=data.columns,
-                                     data=self.pca.inverse_transform(self.pca.transform(scaled_data.values)),
-                                     )
-        spe = ((scaled_data - restored_data) ** 2).mean(axis=1)
-        result = (spe < self.limits['lo']) | (spe > self.limits['hi'])
-        result = result.astype('uint8')
+    def _predict(self,
+                 data: np.ndarray,
+                 tolerance: float = 0.02,
+                 **kwargs,
+                 ) -> np.ndarray:
+        # transform to another space
+        data_t = self.transformer.transform(data)
+        # compute PMSE
+        data_r = self.transformer.inverse_transform(data_t)  # restored data
+        pmse = ((data - data_r) ** 2).mean(axis=1)
+        # check features limits with tolerance
+        limits_center = (self.limits['hi'] + self.limits['lo']) / 2
+        limits_scope = (self.limits['hi'] - self.limits['lo']) / 2
+        limits_hi = limits_center + limits_scope * (1 + tolerance)
+        limits_lo = limits_center - limits_scope * (1 + tolerance)
+        result_f = (data_t < limits_lo) | (data_t > limits_hi)  # 2D-array [RxC]
+        result_e = (pmse > self.limits['pmse'])[:, None]  # 2D-array [Rx1]
+        result = np.hstack((result_f, result_e))
         return result
 
 
