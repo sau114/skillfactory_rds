@@ -343,64 +343,84 @@ class LinearPredictWatchman(Watchman):
               split_by_types: bool = True,
               **kwargs):
         self.scaler = StandardScaler()  # preparing for SGDRegressor
-        self.forecasters = dict()
         self.split_by_types = split_by_types
+        self.forecasters = dict()
+        self.reg_features = list()  # regression
+        self.class_features = list()  # classification
+        return
+
+    def _prefit(self,
+                data: pd.DataFrame,
+                **kwargs,
+                ) -> None:
+        if not self.reg_features:
+            # split features
+            if self.split_by_types:
+                self.class_features = data.select_dtypes(include='uint8').columns.to_list()
+                self.reg_features = data.select_dtypes(exclude='uint8').columns.to_list()
+            else:
+                self.reg_features = list(data.columns)
+        if not self.forecasters:
+            # prepare forecasters
+            for ft in self.reg_features:
+                self.forecasters[ft] = SGDRegressor(loss='squared_error',
+                                                    penalty='l2',  # l2, l1, elasticnet
+                                                    random_state=self.random_state,
+                                                    warm_start=True,
+                                                    )
+            # for ft in self.class_features:
+            #     self.forecasters[ft] = SGDClassifier(loss='log',  # hinge, log / log_loss
+            #                                          penalty='l2',  # l2, l1, elasticnet
+            #                                          random_state=self.random_state,
+            #                                          warm_start=True,
+            #                                          )
+        self.scaler.partial_fit(data)
+        return
+
+    def _partial_fit(self,
+                     data: pd.DataFrame,
+                     **kwargs,
+                     ) -> None:
+        data_s = pd.DataFrame(index=data.index,
+                              columns=data.columns,
+                              data=x_features,
+                              )
+        predict_errors = pd.DataFrame(index=data.index,
+                                      columns=data.columns,
+                                      data=0.0,
+                                      )
+        x_features = data_s[:-1, :]  # scaled without last sample
+        for ft in self.reg_features:
+            y_target = data_s[ft].values[1:]  # scaled values without first sample
+            self.forecasters[ft].fit(x_features, y_target)
+            self.forecasters[ft].predict(x_features)
+        # for ft in self.class_features:
+        #     y_target = data[ft].values[1:]  # unscaled values without first sample
+        #     self.forecasters[ft].fit(x_features, y_target)
+
+
+        # transform to another space
+        data_t = self.transformer.transform(data_s)
+        # store features limits in new space
+        data_t_min = data_t.min(axis=0, initial=None)
+        data_t_max = data_t.max(axis=0, initial=None)
+        # compute only high limit of PMSE, because data is scaled
+        data_r = self.transformer.inverse_transform(data_t)  # restored data
+        pmse_max = self._mean_squared_error(data_s, data_r).max(initial=None)
+
+        if self.limits:
+            self.limits['lo'] = np.fmin(self.limits['lo'], data_t_min)
+            self.limits['hi'] = np.fmax(self.limits['hi'], data_t_max)
+            self.limits['pmse'] = max(self.limits['pmse'], pmse_max)
+        else:
+            # initialize empty dict by min and max features
+            self.limits['lo'] = data_t_min
+            self.limits['hi'] = data_t_max
+            self.limits['pmse'] = pmse_max
         return
 
 
 class LinPredictWatchman:
-
-    def __init__(self,
-                 random_state: Optional[int] = None,
-                 also_compute_spe: bool = True,
-                 use_log_state: bool = True,
-                 ):
-        self.limits = None  # predict error limits
-        self.scaler = StandardScaler()
-        self.regressors = None
-        self.random_state = random_state
-        if also_compute_spe:
-            self.spe_hi = 0.0
-        else:
-            self.spe_hi = None
-        self.use_log = use_log_state
-        self.lin_columns = None
-        self.log_columns = None
-        return
-
-    def __repr__(self):
-        return f'{self.__class__.__name__}(n_features={len(self.regressors)})'
-
-    def prefit(self, data: pd.DataFrame) -> None:
-        # create regressors
-        if self.regressors is None:
-            if self.use_log:
-                self.log_columns = [c for c in data.columns if c.endswith('_state')]
-                self.lin_columns = [c for c in data.columns if not c.endswith('_state')]
-            else:
-                self.lin_columns = [c for c in data.columns]
-            self.regressors = dict()
-            for c in data.columns:
-                if c in self.lin_columns:
-                    self.regressors[c] = SGDRegressor(random_state=self.random_state,
-                                                      warm_start=True,
-                                                      # can be: squared_error, huber, ...
-                                                      loss='squared_error',
-                                                      )
-                else:
-                    self.regressors[c] = SGDClassifier(random_state=self.random_state,
-                                                       warm_start=True,
-                                                       # can be: hinge, log/log_loss, squared_hinge, perceptron, ...
-                                                       loss='log',
-                                                       )
-        # create limits
-        if self.limits is None:
-            self.limits = pd.DataFrame(index=data.columns, columns=['lo', 'hi'])
-            self.limits['lo'] = 0.0
-            self.limits['hi'] = 0.0
-        # fit scaler
-        self.scaler.partial_fit(data[self.lin_columns])
-        return
 
     def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.05) -> None:
         # fit regressors on data
