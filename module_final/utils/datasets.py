@@ -51,9 +51,7 @@ class Dataset:
                 raise DatasetError(f'Sub-directory {sd} is not available.')
         return
 
-    def __init__(self, path: Optional[str] = None):
-        if path is not None:
-            self.ROOT = path
+    def __init__(self):
         if not os.path.isdir(self.ROOT):
             raise DatasetError(f'Path {self.ROOT} is not available.')
         self._check_required_subdirs()

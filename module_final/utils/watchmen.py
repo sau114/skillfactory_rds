@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -19,8 +19,8 @@ class Watchman:
     # root class of Watchmen
 
     def _init(self, **kwargs):
-        self.scaler = None  # transform data in same dimension
-        pass
+        self.scaler = StandardScaler()  # transform data in same dimension
+        return
 
     def __init__(self,
                  random_state: Optional[int] = None,
@@ -45,30 +45,13 @@ class Watchman:
             raise WatchmanError('Batch is not correspond previous data')
         return
 
-    def _scaler_partial_fit(self, data: pd.DataFrame) -> None:
-        # partial fit
-        if self.scaler is not None:
-            self.scaler.partial_fit(data.values)
-        return
-
-    def _scaler_transform(self, data: pd.DataFrame) -> np.ndarray:
-        # transform data
-        if self.scaler is None:
-            return data.values
-        return self.scaler.transform(data.values)
-
-    def _scaler_inverse_transform(self, data: np.ndarray) -> np.ndarray:
-        # inverse transform data
-        if self.scaler is None:
-            return data
-        return self.scaler.inverse_transform(data)
-
     def _prefit(self,
-                data: np.ndarray,
+                data: pd.DataFrame,
                 **kwargs,
                 ) -> None:
-        # fit transformers
-        # fit feature generators
+        self.scaler.partial_fit(data)
+        data_s = self.scaler.transform(data)
+        # prefit
         return
 
     def prefit(self,
@@ -76,19 +59,15 @@ class Watchman:
                **kwargs,
                ) -> None:
         self._check_compliance(data_batch)
-        self._scaler_partial_fit(data_batch)
-        data_scaled = self._scaler_transform(data_batch)
-        self._prefit(data_scaled, **kwargs)
+        self._prefit(data_batch, **kwargs)
         return
 
     def _partial_fit(self,
-                     data: np.ndarray,
+                     data: pd.DataFrame,
                      **kwargs,
                      ) -> None:
-        # transform data
-        # generate features
-        # fit forecasters
-        # store limits
+        data_s = self.scaler.transform(data)
+        # partial fit
         return
 
     def partial_fit(self,
@@ -96,32 +75,30 @@ class Watchman:
                     **kwargs,
                     ) -> None:
         self._check_compliance(data_batch)
-        data_scaled = self._scaler_transform(data_batch)
-        self._partial_fit(data_scaled, **kwargs)
-        pass
+        self._partial_fit(data_batch, **kwargs)
+        return
 
     def _predict(self,
-                 data: np.ndarray,
+                 data: pd.DataFrame,
                  **kwargs,
-                 ) -> np.ndarray:
-        # transform data
-        # generate features
-        # use forecasters
-        # check limits
-        result = np.zeros_like(data, dtype=np.uint8)  # dummy predict
+                 ) -> pd.DataFrame:
+        data_s = self.scaler.transform(data)
+        # predict
+        result = pd.DataFrame(index=data.index,
+                              columns=data.columns,
+                              data=0,
+                              dtype='uint8',
+                              )
         return result
 
     def predict(self,
                 data_batch: pd.DataFrame,
                 reduce: bool = False,
                 **kwargs,
-                ) -> pd.Series:
+                ) -> Union[pd.DataFrame, pd.Series]:
         # common
         self._check_compliance(data_batch)
-        data_scaled = self._scaler_transform(data_batch)
-        result = pd.DataFrame(index=data_batch.index, data=self._predict(data_scaled, **kwargs), dtype='uint8')
-        if result.shape[1] == data_batch.shape[1]:  # same number of columns
-            result.columns = data_batch.columns
+        result = self._predict(data_batch, **kwargs)
         if reduce:
             result = result.any(axis=1)
         return result
@@ -131,43 +108,50 @@ class DirectLimitWatchman(Watchman):
     # Checking limits of features directly
 
     def _init(self, **kwargs):
-        self.scaler = None  # scaler is not used
-        pass
+        # without scaler
+        return
 
     def _prefit(self,
-                data: np.ndarray,
+                data: pd.DataFrame,
                 **kwargs,
                 ) -> None:
         # nothing
         return
 
     def _partial_fit(self,
-                     data: np.ndarray,
+                     data: pd.DataFrame,
                      **kwargs,
                      ) -> None:
+        data_v = data.values
         # store features limits
-        data_min = data.min(axis=0, initial=None)
-        data_max = data.max(axis=0, initial=None)
+        data_v_min = data_v.min(axis=0, initial=None)
+        data_v_max = data_v.max(axis=0, initial=None)
         if self.limits:
-            self.limits['lo'] = np.fmin(self.limits['lo'], data_min)
-            self.limits['hi'] = np.fmax(self.limits['hi'], data_max)
+            self.limits['lo'] = np.fmin(self.limits['lo'], data_v_min)
+            self.limits['hi'] = np.fmax(self.limits['hi'], data_v_max)
         else:
             # initialize empty dict by min and max features
-            self.limits['lo'] = data_min
-            self.limits['hi'] = data_max
+            self.limits['lo'] = data_v_min
+            self.limits['hi'] = data_v_max
         return
 
     def _predict(self,
-                 data: np.ndarray,
+                 data: pd.DataFrame,
                  tolerance: float = 0.02,
                  **kwargs,
-                 ) -> np.ndarray:
+                 ) -> pd.DataFrame:
+        data_v = data.values
         # check features limits with tolerance
         limits_center = (self.limits['hi'] + self.limits['lo']) / 2
         limits_scope = (self.limits['hi'] - self.limits['lo']) / 2
         limits_hi = limits_center + limits_scope * (1 + tolerance)
         limits_lo = limits_center - limits_scope * (1 + tolerance)
-        result = (data < limits_lo) | (data > limits_hi)
+        # summarize
+        result = pd.DataFrame(index=data.index,
+                              columns=data.columns,
+                              data=(data_v < limits_lo) | (data_v > limits_hi),
+                              dtype='uint8',
+                              )
         return result
 
 
@@ -179,8 +163,9 @@ class PcaLimitWatchman(Watchman):
               n_components: int = 3,
               **kwargs):
         self.scaler = StandardScaler()  # preparing before pca
+        assert 0 < n_components, 'Number of components must be greater than zero'
         self.transformer = IncrementalPCA(n_components=n_components)
-        pass
+        return
 
     def explain_transformer(self) -> pd.Series:
         # scree of PCA for selecting the number of components
@@ -190,24 +175,33 @@ class PcaLimitWatchman(Watchman):
         return scree
 
     def _prefit(self,
-                data: np.ndarray,
+                data: pd.DataFrame,
                 **kwargs,
                 ) -> None:
-        self.transformer.partial_fit(data)
+        self.scaler.partial_fit(data)
+        data_s = self.scaler.transform(data)
+        self.transformer.partial_fit(data_s)
         return
 
+    @staticmethod
+    def _mean_squared_error(data_1: np.ndarray,
+                            data_2: np.ndarray,
+                            ) -> np.ndarray:
+        return ((data_1 - data_2) ** 2).mean(axis=1)
+
     def _partial_fit(self,
-                     data: np.ndarray,
+                     data: pd.DataFrame,
                      **kwargs,
                      ) -> None:
+        data_s = self.scaler.transform(data)
         # transform to another space
-        data_t = self.transformer.transform(data)
+        data_t = self.transformer.transform(data_s)
         # store features limits in new space
         data_t_min = data_t.min(axis=0, initial=None)
         data_t_max = data_t.max(axis=0, initial=None)
         # compute only high limit of PMSE, because data is scaled
         data_r = self.transformer.inverse_transform(data_t)  # restored data
-        pmse_max = ((data - data_r) ** 2).mean(axis=1).max()
+        pmse_max = self._mean_squared_error(data_s, data_r).max(initial=None)
         if self.limits:
             self.limits['lo'] = np.fmin(self.limits['lo'], data_t_min)
             self.limits['hi'] = np.fmax(self.limits['hi'], data_t_max)
@@ -220,99 +214,141 @@ class PcaLimitWatchman(Watchman):
         return
 
     def _predict(self,
-                 data: np.ndarray,
+                 data: pd.DataFrame,
                  tolerance: float = 0.02,
                  **kwargs,
-                 ) -> np.ndarray:
+                 ) -> pd.DataFrame:
+        data_s = self.scaler.transform(data)
         # transform to another space
-        data_t = self.transformer.transform(data)
+        data_t = self.transformer.transform(data_s)
         # compute PMSE
         data_r = self.transformer.inverse_transform(data_t)  # restored data
-        pmse = ((data - data_r) ** 2).mean(axis=1)
+        pmse = self._mean_squared_error(data_s, data_r)
         # check features limits with tolerance
         limits_center = (self.limits['hi'] + self.limits['lo']) / 2
         limits_scope = (self.limits['hi'] - self.limits['lo']) / 2
         limits_hi = limits_center + limits_scope * (1 + tolerance)
         limits_lo = limits_center - limits_scope * (1 + tolerance)
+        # summarize
         result_f = (data_t < limits_lo) | (data_t > limits_hi)  # 2D-array [RxC]
         result_e = (pmse > self.limits['pmse'])[:, None]  # 2D-array [Rx1]
-        result = np.hstack((result_f, result_e))
+        result = pd.DataFrame(index=data.index,
+                              data=np.hstack((result_f, result_e)),
+                              dtype='uint8',
+                              )
         return result
 
 
-class IsolatingWatchman:
-    # using Isolation Forest for anomaly detection
+class IsoForestWatchman(Watchman):
+    # Isolating Forest algorithm for time series
 
-    def __init__(self,
-                 max_trees: int = 1000,
-                 max_samples: int = 256,
-                 max_features: float = 1.0,
-                 random_state: Optional[int] = None,
-                 # contamination: Union[str, float] = 'auto',
-                 generate_stat_features: bool = True,
-                 ):
-        self.forest = IsolationForest(n_estimators=0,
-                                      max_samples=max_samples,
-                                      max_features=max_features,
-                                      random_state=random_state,
-                                      # contamination=contamination,
-                                      n_jobs=-1,
-                                      warm_start=True,
-                                      )
+    def _init(self,
+              generate_features: bool = True,
+              window_sparsity: float = 0.5,
+              window_overlap: float = 0.1,
+              max_trees: int = 100,
+              **kwargs):
+        self.forest = IsolationForest(
+            n_estimators=0,
+            max_samples='auto',
+            contamination='auto',
+            max_features=1.0,
+            bootstrap=False,
+            n_jobs=-1,
+            random_state=self.random_state,
+            warm_start=True,
+        )
+        self.generate_features = generate_features
+        self.float_features = []
+        assert 0.0 < window_sparsity <= 1.0, 'Sparsity must be in (0.0; 1.0]'
+        self.window_sparsity = window_sparsity
+        assert 0.0 <= window_overlap < 1.0, 'Overlap must be in [0.0; 1.0)'
+        self.window_overlap = window_overlap
+        assert 1 <= max_trees <= 10_000, 'Incorrect maximum number of trees'
         self.max_trees = max_trees
-        self.generate_stat_features = generate_stat_features
+        self._samples_per_tree = 256  # default number of samples per tree
+        self._batches_len = []  # save length of batches for counting n_trees
+        return
+
+    def _compute_window_size_shift(self):
+        size = round(self._samples_per_tree / self.window_sparsity)  # [samples_per_tree; +Inf)
+        shift = round((size - 1) * (1 - self.window_overlap)) + 1  # [1; samples_per_window]
+        return size, shift
+
+    def _estimate_n_trees(self) -> int:
+        size, shift = self._compute_window_size_shift()
+        return sum(int(np.ceil(max(b_len - size, 0) / shift)) + 1 for b_len in self._batches_len)
+
+    def _prefit(self,
+                data: pd.DataFrame,
+                **kwargs,
+                ) -> None:
+        self._batches_len.append(data.shape[0])
+        # at least one tree per batch
+        self.max_trees = max(self.max_trees, len(self._batches_len))
+        # if we need too much trees, increase sparsity
+        while self._estimate_n_trees() > self.max_trees:
+            self.window_sparsity *= 0.9
         return
 
     @staticmethod
-    def _generate_stat_features(data: pd.DataFrame, window: int = 15) -> pd.DataFrame:
-        float_data = data.select_dtypes(include='float')
+    def _generate_features(data: pd.DataFrame, window: int = 20) -> pd.DataFrame:
+        data_f = data.select_dtypes(include='float')
+        # mean
+        data_mean = data_f.rolling(window, min_periods=1).mean()
+        data_mean.columns = 'mean_' + data_mean.columns
+        # median
+        data_median = data_f.rolling(window, min_periods=1).median()
+        data_mean.columns = 'median_' + data_mean.columns
+        # standard deviation
+        data_std = data_f.rolling(window, min_periods=1).std().fillna(0)
+        data_mean.columns = 'std_' + data_mean.columns
+        # kurtosis
+        data_kurt = data_f.rolling(window, min_periods=1).kurt().fillna(0)
+        data_mean.columns = 'kurt_' + data_mean.columns
+        return pd.concat([data_mean, data_median, data_std, data_kurt], axis=1)
 
-        data_mean = float_data.rolling(window, min_periods=1).mean()
-        data_mean.columns += '_mean'
-
-        data_median = float_data.rolling(window, min_periods=1).median()
-        data_median.columns += '_median'
-
-        data_std = float_data.rolling(window, min_periods=1).std().fillna(0)
-        data_std.columns += '_std'
-
-        data_kurt = float_data.rolling(window, min_periods=1).kurt().fillna(0)
-        data_kurt.columns += '_kurt'
-
-        return pd.concat([data, data_mean, data_median, data_std, data_kurt], axis=1)
-
-    def __repr__(self):
-        return f'{self.__class__.__name__}(n_trees={self.forest.n_estimators})'
-
-    def prefit(self, data: pd.DataFrame) -> None:
-        # nothing
+    def _partial_fit(self,
+                     data: pd.DataFrame,
+                     **kwargs,
+                     ) -> None:
+        if self.generate_features:
+            data = pd.concat([data, self._generate_features(data)], axis=1)
+        size, shift = self._compute_window_size_shift()
+        for i in range(0, data.shape[0], shift):
+            self.forest.n_estimators += 1  # one tree per window
+            self.forest.fit(data.iloc[i:i+size].values)
+            # if right border of window is out of data
+            if i+size >= data.shape[0]:
+                break
         return
 
-    def partial_fit(self, data: pd.DataFrame, increment: Optional[int] = 1) -> None:
-        if increment is None or increment <= 0:
-            inc = data.shape[0] // self.forest.max_samples
-        else:
-            inc = increment
-        if self.generate_stat_features:
-            data = self._generate_stat_features(data)
-        self.forest.n_estimators = min(self.max_trees,
-                                       self.forest.n_estimators + inc
-                                       )
-        self.forest.fit(data.values)
-        return
-
-    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
-        if self.generate_stat_features:
-            data = self._generate_stat_features(data)
-        result = (pd.Series(index=data.index, data=self.forest.predict(data.values))
-                  .replace({1: 0, -1: 1})
-                  .astype('uint8')
-                  )
+    def _predict(self,
+                 data: pd.DataFrame,
+                 **kwargs,
+                 ) -> pd.DataFrame:
+        if self.generate_features:
+            data = pd.concat([data, self._generate_features(data)], axis=1)
+        result = pd.DataFrame(index=data.index,
+                              data=(1-self.forest.predict(data.values)) // 2,  # replace (1, -1) to (0, 1)
+                              dtype='uint8',
+                              )
         return result
 
 
-class LinearPredictWatchman:
-    # using linear regressors for predict next value and calc limits of error
+class LinearPredictWatchman(Watchman):
+    # using linear models (SGDRegressor and SGDClassifier) for predict next value and calc limits of error
+
+    def _init(self,
+              split_by_types: bool = True,
+              **kwargs):
+        self.scaler = StandardScaler()  # preparing for SGDRegressor
+        self.forecasters = dict()
+        self.split_by_types = split_by_types
+        return
+
+
+class LinPredictWatchman:
 
     def __init__(self,
                  random_state: Optional[int] = None,
@@ -482,9 +518,6 @@ class ForestPredictWatchman:
         for j, c in enumerate(data.columns):
             y = x_[1:, j]  # without first row
             self.regressors[c].n_estimators = self.regressors[c].n_estimators + increment
-                # min(self.max_trees,
-                #                                   self.regressors[c].n_estimators + increment
-                #                                   )
             if c in self.lin_columns:
                 self.regressors[c].fit(x, y)
             else:
@@ -584,10 +617,6 @@ class GbmPredictWatchman:
         errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
         for j, c in enumerate(data.columns):
             y = x_[1:, j]  # without first row
-            # self.regressors[c].n_estimators = self.regressors[c].n_estimators + increment
-                # min(self.max_trees,
-                #                                   self.regressors[c].n_estimators + increment
-                #                                   )
             if c in self.lin_columns:
                 try:
                     self.regressors[c].best_iteration_
