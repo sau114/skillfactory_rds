@@ -4,11 +4,9 @@ import numpy as np
 import pandas as pd
 
 from sklearn.decomposition import IncrementalPCA
-from sklearn.ensemble import IsolationForest, RandomForestRegressor, RandomForestClassifier
-from sklearn.linear_model import SGDRegressor, SGDClassifier
+from sklearn.ensemble import IsolationForest
+from sklearn.linear_model import SGDRegressor
 from sklearn.preprocessing import StandardScaler
-
-from lightgbm import LGBMRegressor, LGBMClassifier
 
 
 class WatchmanError(ValueError):
@@ -19,7 +17,7 @@ class Watchman:
     # root class of Watchmen
 
     def _init(self, **kwargs):
-        self.scaler = StandardScaler()  # transform data in same dimension
+        # self.scaler = StandardScaler()  # transform data in same dimension
         return
 
     def __init__(self,
@@ -49,8 +47,8 @@ class Watchman:
                 data: pd.DataFrame,
                 **kwargs,
                 ) -> None:
-        self.scaler.partial_fit(data)
-        data_s = self.scaler.transform(data)
+        # self.scaler.partial_fit(data)
+        # data_s = self.scaler.transform(data)
         # prefit
         return
 
@@ -66,7 +64,7 @@ class Watchman:
                      data: pd.DataFrame,
                      **kwargs,
                      ) -> None:
-        data_s = self.scaler.transform(data)
+        # data_s = self.scaler.transform(data)
         # partial fit
         return
 
@@ -82,7 +80,7 @@ class Watchman:
                  data: pd.DataFrame,
                  **kwargs,
                  ) -> pd.DataFrame:
-        data_s = self.scaler.transform(data)
+        # data_s = self.scaler.transform(data)
         # predict
         result = pd.DataFrame(index=data.index,
                               columns=data.columns,
@@ -231,7 +229,7 @@ class PcaLimitWatchman(Watchman):
         limits_lo = limits_center - limits_scope * (1 + tolerance)
         # summarize
         result_f = (data_t < limits_lo) | (data_t > limits_hi)  # 2D-array [RxC]
-        result_e = (pmse > self.limits['pmse'])[:, None]  # 2D-array [Rx1]
+        result_e = (pmse > self.limits['pmse'] * (1 + tolerance))[:, None]  # 2D-array [Rx1]
         result = pd.DataFrame(index=data.index,
                               data=np.hstack((result_f, result_e)),
                               dtype='uint8',
@@ -337,13 +335,11 @@ class IsoForestWatchman(Watchman):
 
 
 class LinearPredictWatchman(Watchman):
-    # using linear models (SGDRegressor and SGDClassifier) for predict next value and calc limits of error
+    # using linear models (SGDRegressor) for predict next value and calc limits of error
 
     def _init(self,
-              split_by_types: bool = True,
               **kwargs):
         self.scaler = StandardScaler()  # preparing for SGDRegressor
-        self.split_by_types = split_by_types
         self.forecasters = dict()
         self.reg_features = list()  # regression
         self.class_features = list()  # classification
@@ -355,11 +351,8 @@ class LinearPredictWatchman(Watchman):
                 ) -> None:
         if not self.reg_features:
             # split features
-            if self.split_by_types:
-                self.class_features = data.select_dtypes(include='uint8').columns.to_list()
-                self.reg_features = data.select_dtypes(exclude='uint8').columns.to_list()
-            else:
-                self.reg_features = list(data.columns)
+            self.class_features = data.select_dtypes(include='uint8').columns.to_list()
+            self.reg_features = data.select_dtypes(exclude='uint8').columns.to_list()
         if not self.forecasters:
             # prepare forecasters
             for ft in self.reg_features:
@@ -368,12 +361,6 @@ class LinearPredictWatchman(Watchman):
                                                     random_state=self.random_state,
                                                     warm_start=True,
                                                     )
-            # for ft in self.class_features:
-            #     self.forecasters[ft] = SGDClassifier(loss='log',  # hinge, log / log_loss
-            #                                          penalty='l2',  # l2, l1, elasticnet
-            #                                          random_state=self.random_state,
-            #                                          warm_start=True,
-            #                                          )
         self.scaler.partial_fit(data)
         return
 
@@ -381,302 +368,65 @@ class LinearPredictWatchman(Watchman):
                      data: pd.DataFrame,
                      **kwargs,
                      ) -> None:
+        # predict and store errors: only float features by one sample using all features
         data_s = pd.DataFrame(index=data.index,
                               columns=data.columns,
-                              data=x_features,
+                              data=self.scaler.transform(data),
                               )
-        predict_errors = pd.DataFrame(index=data.index,
-                                      columns=data.columns,
-                                      data=0.0,
-                                      )
-        x_features = data_s[:-1, :]  # scaled without last sample
+        x_features = data_s.values[:-1, :]  # scaled without last sample
+        errors = pd.DataFrame(index=data.index[1:],
+                              columns=self.reg_features,
+                              data=0.0,
+                              )
         for ft in self.reg_features:
             y_target = data_s[ft].values[1:]  # scaled values without first sample
-            self.forecasters[ft].fit(x_features, y_target)
-            self.forecasters[ft].predict(x_features)
-        # for ft in self.class_features:
-        #     y_target = data[ft].values[1:]  # unscaled values without first sample
-        #     self.forecasters[ft].fit(x_features, y_target)
-
-
-        # transform to another space
-        data_t = self.transformer.transform(data_s)
-        # store features limits in new space
-        data_t_min = data_t.min(axis=0, initial=None)
-        data_t_max = data_t.max(axis=0, initial=None)
-        # compute only high limit of PMSE, because data is scaled
-        data_r = self.transformer.inverse_transform(data_t)  # restored data
-        pmse_max = self._mean_squared_error(data_s, data_r).max(initial=None)
-
+            self.forecasters[ft].partial_fit(x_features, y_target)
+            y_predict = self.forecasters[ft].predict(x_features)
+            errors[ft] = y_target - y_predict
+        errors_min = errors.min()
+        errors_max = errors.max()
+        pmse_max = (errors ** 2).mean(axis=1).max()
         if self.limits:
-            self.limits['lo'] = np.fmin(self.limits['lo'], data_t_min)
-            self.limits['hi'] = np.fmax(self.limits['hi'], data_t_max)
+            self.limits['lo'] = self.limits['lo'].combine(errors_min, min)
+            self.limits['hi'] = self.limits['hi'].combine(errors_max, max)
             self.limits['pmse'] = max(self.limits['pmse'], pmse_max)
         else:
             # initialize empty dict by min and max features
-            self.limits['lo'] = data_t_min
-            self.limits['hi'] = data_t_max
+            self.limits['lo'] = errors_min
+            self.limits['hi'] = errors_max
             self.limits['pmse'] = pmse_max
         return
 
-
-class LinPredictWatchman:
-
-    def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.05) -> None:
-        # fit regressors on data
-        x_ = data.copy()
-        x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
-        x_ = x_.values
-        x = x_[:-1]  # without last row
-        errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
-        for j, c in enumerate(data.columns):
-            y = x_[1:, j]  # without first row
-            # self.regressors[c].fit(x, y)
-            if c in self.lin_columns:
-                self.regressors[c].partial_fit(x, y)
-            else:
-                self.regressors[c].partial_fit(x, y, classes=np.array([0, 1, 2]))
-            # compute predict errors
-            errors[c] = y - self.regressors[c].predict(x)
-        # update limits
-        center = (errors.max() + errors.min()) / 2
-        scope = (errors.max() - errors.min()) / 2
-        self.limits['lo'] = self.limits['lo'].combine(center - scope * (1 + tolerance), min)
-        self.limits['hi'] = self.limits['hi'].combine(center + scope * (1 + tolerance), max)
-        if self.spe_hi is not None:
-            self.spe_hi = max((errors**2).mean(axis=1).max() * (1 + tolerance), self.spe_hi)
-        return
-
-    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
-        # predict values and check error's limits
-        result = pd.DataFrame(index=data.index, columns=data.columns, data=0, dtype='uint8')
-        x_ = data.copy()
-        x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
-        x_ = x_.values
-        x = x_[:-1]  # without last row
-        errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
-        for j, c in enumerate(data.columns):
-            y = x_[1:, j]  # without first row
-            errors[c] = y - self.regressors[c].predict(x)
-        result.loc[data.index[1]:] = (errors < self.limits['lo']) | (errors > self.limits['hi'])
-        if self.spe_hi is not None:
-            spe = (errors**2).mean(axis=1)
-            result = result.assign(spe=0.0)
-            result.loc[data.index[1]:, 'spe'] = spe > self.spe_hi
-        result = result.astype('uint8')
-        return result
-
-
-class ForestPredictWatchman:
-    # using random forest regressors for predict next value and calc limits of error
-
-    def __init__(self,
-                 random_state: Optional[int] = None,
-                 also_compute_spe: bool = True,
-                 use_log_state: bool = False,
-                 max_trees: int = 100,
-                 ):
-        self.limits = None  # predict error limits
-        self.scaler = StandardScaler()  # need for spe
-        self.regressors = None
-        self.random_state = random_state
-        if also_compute_spe:
-            self.spe_hi = 0.0
-        else:
-            self.spe_hi = None
-        self.use_log = use_log_state
-        self.lin_columns = None
-        self.log_columns = None
-        self.max_trees = max_trees
-        return
-
-    def __repr__(self):
-        return f'{self.__class__.__name__}(n_features={len(self.regressors)})'
-
-    def prefit(self, data: pd.DataFrame) -> None:
-        # create regressors
-        if self.regressors is None:
-            if self.use_log:
-                self.log_columns = [c for c in data.columns if c.endswith('_state')]
-                self.lin_columns = [c for c in data.columns if not c.endswith('_state')]
-            else:
-                self.lin_columns = [c for c in data.columns]
-            self.regressors = dict()
-            for c in data.columns:
-                if c in self.lin_columns:
-                    self.regressors[c] = RandomForestRegressor(
-                        n_estimators=0,
-                        criterion='squared_error',
-                        random_state=self.random_state,
-                        n_jobs=-1,
-                        warm_start=True,
-                    )
-                else:
-                    self.regressors[c] = RandomForestClassifier(
-                        n_estimators=0,
-                        criterion='gini',
-                        random_state=self.random_state,
-                        n_jobs=-1,
-                        warm_start=True,
-                    )
-        # create limits
-        if self.limits is None:
-            self.limits = pd.DataFrame(index=data.columns, columns=['lo', 'hi'])
-            self.limits['lo'] = 0.0
-            self.limits['hi'] = 0.0
-        # fit scaler
-        self.scaler.partial_fit(data[self.lin_columns])
-        return
-
-    def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.05, increment: int = 3) -> None:
-        # fit regressors on data
-        x_ = data.copy()
-        x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
-        x_ = x_.values
-        x = x_[:-1]  # without last row
-        errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
-        for j, c in enumerate(data.columns):
-            y = x_[1:, j]  # without first row
-            self.regressors[c].n_estimators = self.regressors[c].n_estimators + increment
-            if c in self.lin_columns:
-                self.regressors[c].fit(x, y)
-            else:
-                self.regressors[c].fit(x, y)
-            # compute predict errors
-            errors[c] = y - self.regressors[c].predict(x)
-        # update limits
-        center = (errors.max() + errors.min()) / 2
-        scope = (errors.max() - errors.min()) / 2
-        self.limits['lo'] = self.limits['lo'].combine(center - scope * (1 + tolerance), min)
-        self.limits['hi'] = self.limits['hi'].combine(center + scope * (1 + tolerance), max)
-        if self.spe_hi is not None:
-            self.spe_hi = max((errors**2).mean(axis=1).max() * (1 + tolerance), self.spe_hi)
-        return
-
-    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
-        # predict values and check error's limits
-        result = pd.DataFrame(index=data.index, columns=data.columns, data=0, dtype='uint8')
-        x_ = data.copy()
-        x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
-        x_ = x_.values
-        x = x_[:-1]  # without last row
-        errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
-        for j, c in enumerate(data.columns):
-            y = x_[1:, j]  # without first row
-            errors[c] = y - self.regressors[c].predict(x)
-        result.loc[data.index[1]:] = (errors < self.limits['lo']) | (errors > self.limits['hi'])
-        if self.spe_hi is not None:
-            spe = (errors**2).mean(axis=1)
-            result = result.assign(spe=0.0)
-            result.loc[data.index[1]:, 'spe'] = spe > self.spe_hi
-        result = result.astype('uint8')
-        return result
-
-
-class GbmPredictWatchman:
-    # using gradient boosting regressors for predict next value and calc limits of error
-
-    def __init__(self,
-                 random_state: Optional[int] = None,
-                 also_compute_spe: bool = True,
-                 use_log_state: bool = True,
-                 max_trees: int = 100,
-                 ):
-        self.limits = None  # predict error limits
-        self.scaler = StandardScaler()  # need for spe
-        self.regressors = None
-        self.random_state = random_state
-        if also_compute_spe:
-            self.spe_hi = 0.0
-        else:
-            self.spe_hi = None
-        self.use_log = use_log_state
-        self.lin_columns = None
-        self.log_columns = None
-        self.max_trees = max_trees
-        return
-
-    def __repr__(self):
-        return f'{self.__class__.__name__}(n_features={len(self.regressors)})'
-
-    def prefit(self, data: pd.DataFrame) -> None:
-        # create regressors
-        if self.regressors is None:
-            if self.use_log:
-                self.log_columns = [c for c in data.columns if c.endswith('_state')]
-                self.lin_columns = [c for c in data.columns if not c.endswith('_state')]
-            else:
-                self.lin_columns = [c for c in data.columns]
-            self.regressors = dict()
-            for c in data.columns:
-                if c in self.lin_columns:
-                    self.regressors[c] = LGBMRegressor(
-                        random_state=self.random_state,
-                        n_jobs=-1,
-                    )
-                else:
-                    self.regressors[c] = LGBMClassifier(
-                        random_state=self.random_state,
-                        n_jobs=-1,
-                    )
-        # create limits
-        if self.limits is None:
-            self.limits = pd.DataFrame(index=data.columns, columns=['lo', 'hi'])
-            self.limits['lo'] = 0.0
-            self.limits['hi'] = 0.0
-        # fit scaler
-        self.scaler.partial_fit(data[self.lin_columns])
-        return
-
-    def partial_fit(self, data: pd.DataFrame, tolerance: float = 0.05, increment: int = 3) -> None:
-        # fit regressors on data
-        x_ = data.copy()
-        x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
-        x_ = x_.values
-        x = x_[:-1]  # without last row
-        errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
-        for j, c in enumerate(data.columns):
-            y = x_[1:, j]  # without first row
-            if c in self.lin_columns:
-                try:
-                    self.regressors[c].best_iteration_
-                except:
-                    self.regressors[c].fit(x, y)
-                else:
-                    self.regressors[c].fit(x, y, init_model=self.regressors[c])
-            else:
-                try:
-                    self.regressors[c].best_iteration_
-                except:
-                    self.regressors[c].fit(x, y)
-                else:
-                    self.regressors[c].fit(x, y, init_model=self.regressors[c])
-            # compute predict errors
-            errors[c] = y - self.regressors[c].predict(x)
-        # update limits
-        center = (errors.max() + errors.min()) / 2
-        scope = (errors.max() - errors.min()) / 2
-        self.limits['lo'] = self.limits['lo'].combine(center - scope * (1 + tolerance), min)
-        self.limits['hi'] = self.limits['hi'].combine(center + scope * (1 + tolerance), max)
-        if self.spe_hi is not None:
-            self.spe_hi = max((errors**2).mean(axis=1).max() * (1 + tolerance), self.spe_hi)
-        return
-
-    def predict(self, data: pd.DataFrame) -> pd.DataFrame:
-        # predict values and check error's limits
-        result = pd.DataFrame(index=data.index, columns=data.columns, data=0, dtype='uint8')
-        x_ = data.copy()
-        x_.loc[:, self.lin_columns] = self.scaler.transform(data.loc[:, self.lin_columns])
-        x_ = x_.values
-        x = x_[:-1]  # without last row
-        errors = pd.DataFrame(index=data.index[1:], columns=data.columns)
-        for j, c in enumerate(data.columns):
-            y = x_[1:, j]  # without first row
-            errors[c] = y - self.regressors[c].predict(x)
-        result.loc[data.index[1]:] = (errors < self.limits['lo']) | (errors > self.limits['hi'])
-        if self.spe_hi is not None:
-            spe = (errors**2).mean(axis=1)
-            result = result.assign(spe=0.0)
-            result.loc[data.index[1]:, 'spe'] = spe > self.spe_hi
-        result = result.astype('uint8')
+    def _predict(self,
+                 data: pd.DataFrame,
+                 tolerance: float = 0.02,
+                 **kwargs,
+                 ) -> pd.DataFrame:
+        # predict and check errors: only float features by one sample using all features
+        data_s = pd.DataFrame(index=data.index,
+                              columns=data.columns,
+                              data=self.scaler.transform(data),
+                              )
+        x_features = data_s.values[:-1, :]  # scaled without last sample
+        errors = pd.DataFrame(index=data.index[1:],
+                              columns=self.reg_features,
+                              data=0.0,
+                              )
+        for ft in self.reg_features:
+            y_target = data_s[ft].values[1:]  # scaled values without first sample
+            y_predict = self.forecasters[ft].predict(x_features)
+            errors[ft] = y_target - y_predict
+        pmse = (errors ** 2).mean(axis=1)
+        result = pd.DataFrame(index=data.index,
+                              columns=self.reg_features,
+                              data=0,
+                              dtype='uint8',
+                              )
+        limits_center = (self.limits['hi'] + self.limits['lo']) / 2
+        limits_scope = (self.limits['hi'] - self.limits['lo']) / 2
+        limits_hi = limits_center + limits_scope * (1 + tolerance)
+        limits_lo = limits_center - limits_scope * (1 + tolerance)
+        result.iloc[1:] = ((errors < limits_lo) | (errors > limits_hi)).astype('uint8')
+        result['pmse'] = 0
+        result.iloc[1:, -1] = (pmse > self.limits['pmse'] * (1 + tolerance)).astype('uint8')
         return result
