@@ -1,5 +1,9 @@
 from typing import Optional, Union
 
+import os
+import os.path
+import pickle
+
 import numpy as np
 import pandas as pd
 
@@ -8,9 +12,7 @@ from sklearn.ensemble import IsolationForest
 from sklearn.linear_model import SGDRegressor
 from sklearn.preprocessing import StandardScaler
 
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, LSTM
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow import keras
 
 
 class WatchmanError(ValueError):
@@ -19,6 +21,7 @@ class WatchmanError(ValueError):
 
 class Watchman:
     # root class of Watchmen
+    pickle_subdir = 'storage'  # subdirectory for pickle watchman
 
     def _init(self, **kwargs):
         # self.scaler = StandardScaler()  # transform data in same dimension
@@ -28,7 +31,7 @@ class Watchman:
                  random_state: Optional[int] = None,
                  **kwargs,
                  ):
-        self.data_dtypes = None  # names and types of data features
+        self.data_dtypes = pd.Series(dtype='object')  # names and types of data features
         self.limits = dict()  # all limits for predict anomalies
         self.random_state = random_state  # random seed for everybody
         self._init(**kwargs)
@@ -40,7 +43,7 @@ class Watchman:
     def _check_compliance(self,
                           data_batch: pd.DataFrame,
                           ) -> None:
-        if self.data_dtypes is None:
+        if self.data_dtypes.empty:
             self.data_dtypes = data_batch.dtypes
             return
         if not data_batch.dtypes.equals(self.data_dtypes):
@@ -104,6 +107,53 @@ class Watchman:
         if reduce:
             result = result.any(axis=1)
         return result
+
+    def _dump(self, instance_subdir: str):
+        # dump scaler, transformer etc.
+        pickle_specific = os.path.join(instance_subdir, f'specific.pickle')
+        with open(pickle_specific, 'wb') as f:
+            pass
+        return
+
+    def dump(self, instance_name: str) -> None:
+        if not os.path.isdir(self.pickle_subdir):
+            os.mkdir(self.pickle_subdir)
+        class_subdir = os.path.join(self.pickle_subdir, self.__class__.__name__)
+        if not os.path.isdir(class_subdir):
+            os.mkdir(class_subdir)
+        instance_subdir = os.path.join(class_subdir, instance_name)
+        if not os.path.isdir(instance_subdir):
+            os.mkdir(instance_subdir)
+        pickle_common = os.path.join(instance_subdir, f'common.pickle')
+        with open(pickle_common, 'wb') as f:
+            pickle.dump(self.data_dtypes, f)
+            pickle.dump(self.limits, f)
+            pickle.dump(self.random_state, f)
+        self._dump(instance_subdir)
+        return
+
+    def _load(self, instance_subdir: str):
+        # load scaler, transformer etc.
+        pickle_specific = os.path.join(instance_subdir, f'specific.pickle')
+        if not os.path.isfile(pickle_specific):
+            raise WatchmanError(f'Unavailable file {pickle_specific}')
+        with open(pickle_specific, 'rb') as f:
+            pass
+        return
+
+    def load(self, instance_name: str) -> None:
+        instance_subdir = os.path.join(self.pickle_subdir, self.__class__.__name__, instance_name)
+        if not os.path.isdir(instance_subdir):
+            raise WatchmanError(f'Unavailable directory {instance_subdir}')
+        pickle_common = os.path.join(instance_subdir, f'common.pickle')
+        if not os.path.isfile(pickle_common):
+            raise WatchmanError(f'Unavailable file {pickle_common}')
+        with open(pickle_common, 'rb') as f:
+            self.data_dtypes = pickle.load(f)
+            self.limits = pickle.load(f)
+            self.random_state = pickle.load(f)
+        self._load(instance_subdir)
+        return
 
 
 class DirectLimitWatchman(Watchman):
@@ -240,6 +290,22 @@ class PcaLimitWatchman(Watchman):
                               )
         return result
 
+    def _dump(self, instance_subdir: str):
+        pickle_specific = os.path.join(instance_subdir, f'specific.pickle')
+        with open(pickle_specific, 'wb') as f:
+            pickle.dump(self.scaler, f)
+            pickle.dump(self.transformer, f)
+        return
+
+    def _load(self, instance_subdir: str):
+        pickle_specific = os.path.join(instance_subdir, f'specific.pickle')
+        if not os.path.isfile(pickle_specific):
+            raise WatchmanError(f'Unavailable file {pickle_specific}')
+        with open(pickle_specific, 'rb') as f:
+            self.scaler = pickle.load(f)
+            self.transformer = pickle.load(f)
+        return
+
 
 class IsoForestWatchman(Watchman):
     # Isolating Forest algorithm for time series
@@ -336,6 +402,34 @@ class IsoForestWatchman(Watchman):
                               dtype='uint8',
                               )
         return result
+
+    def _dump(self, instance_subdir: str):
+        pickle_specific = os.path.join(instance_subdir, f'specific.pickle')
+        with open(pickle_specific, 'wb') as f:
+            pickle.dump(self.forest, f)
+            pickle.dump(self.generate_features, f)
+            pickle.dump(self.float_features, f)
+            pickle.dump(self.window_sparsity, f)
+            pickle.dump(self.window_overlap, f)
+            pickle.dump(self.max_trees, f)
+            pickle.dump(self._samples_per_tree, f)
+            pickle.dump(self._batches_len, f)
+        return
+
+    def _load(self, instance_subdir: str):
+        pickle_specific = os.path.join(instance_subdir, f'specific.pickle')
+        if not os.path.isfile(pickle_specific):
+            raise WatchmanError(f'Unavailable file {pickle_specific}')
+        with open(pickle_specific, 'rb') as f:
+            self.forest = pickle.load(f)
+            self.generate_features = pickle.load(f)
+            self.float_features = pickle.load(f)
+            self.window_sparsity = pickle.load(f)
+            self.window_overlap = pickle.load(f)
+            self.max_trees = pickle.load(f)
+            self._samples_per_tree = pickle.load(f)
+            self._batches_len = pickle.load(f)
+        return
 
 
 class LinearPredictWatchman(Watchman):
@@ -435,6 +529,26 @@ class LinearPredictWatchman(Watchman):
         result.iloc[1:, -1] = (pmse > self.limits['pmse'] * (1 + tolerance)).astype('uint8')
         return result
 
+    def _dump(self, instance_subdir: str):
+        pickle_specific = os.path.join(instance_subdir, f'specific.pickle')
+        with open(pickle_specific, 'wb') as f:
+            pickle.dump(self.scaler, f)
+            pickle.dump(self.forecasters, f)
+            pickle.dump(self.reg_features, f)
+            pickle.dump(self.class_features, f)
+        return
+
+    def _load(self, instance_subdir: str):
+        pickle_specific = os.path.join(instance_subdir, f'specific.pickle')
+        if not os.path.isfile(pickle_specific):
+            raise WatchmanError(f'Unavailable file {pickle_specific}')
+        with open(pickle_specific, 'rb') as f:
+            self.scaler = pickle.load(f)
+            self.forecasters = pickle.load(f)
+            self.reg_features = pickle.load(f)
+            self.class_features = pickle.load(f)
+        return
+
 
 class DeepPredictWatchman(Watchman):
     # using RNN (LSTM) for predict next value and calc limits of error
@@ -445,7 +559,6 @@ class DeepPredictWatchman(Watchman):
               **kwargs):
         self.scaler = StandardScaler()
         self.forecaster = None
-        self.callback = None
         assert n_steps > 0, 'Number of steps must be greater than zero'
         self.n_steps = n_steps
         assert n_units > 0, 'Number of units must be greater than zero'
@@ -458,31 +571,26 @@ class DeepPredictWatchman(Watchman):
                 ) -> None:
         if not self.forecaster:
             n_features = data.shape[1]
-            self.forecaster = Sequential()
-            self.forecaster.add(LSTM(self.n_units, activation='relu',
-                                     return_sequences=True,
-                                     input_shape=(self.n_steps, n_features)))
-            self.forecaster.add(LSTM(self.n_units, activation='relu'))
-            self.forecaster.add(Dense(n_features))
+            keras.utils.set_random_seed(self.random_state)
+            self.forecaster = keras.models.Sequential()
+            self.forecaster.add(keras.layers.LSTM(self.n_units, activation='relu',
+                                                  return_sequences=True,
+                                                  input_shape=(self.n_steps, n_features)))
+            self.forecaster.add(keras.layers.LSTM(self.n_units, activation='relu'))
+            self.forecaster.add(keras.layers.Dense(n_features))
             self.forecaster.compile(optimizer='adam', loss='mse')
-            self.callback = EarlyStopping(monitor='loss',
-                                          patience=3,
-                                          min_delta=0.01,
-                                          restore_best_weights=True,
-                                          verbose=0,
-                                          )
         self.scaler.partial_fit(data)
         return
 
     def _split_data(self, data: np.array) -> tuple:
         # split data to features and target
-        X = list()
+        x = list()
         y = list()
         for i_stt in range(data.shape[0] - self.n_steps):
             i_stp = i_stt + self.n_steps
-            X.append(data[i_stt:i_stp])
+            x.append(data[i_stt:i_stp])
             y.append(data[i_stp])
-        return np.array(X), np.array(y)
+        return np.array(x), np.array(y)
 
     def _partial_fit(self,
                      data: pd.DataFrame,
@@ -490,13 +598,19 @@ class DeepPredictWatchman(Watchman):
                      ) -> None:
         # predict and store errors: one sample by n previous samples
         data_s = self.scaler.transform(data)  # n_rows
-        X, y = self._split_data(data_s)  # n_rows-n_steps
-        self.forecaster.fit(X, y,
+        x, y = self._split_data(data_s)  # n_rows-n_steps
+        callback = keras.callbacks.EarlyStopping(monitor='loss',
+                                                 patience=3,
+                                                 min_delta=0.01,
+                                                 restore_best_weights=True,
+                                                 verbose=0,
+                                                 )
+        self.forecaster.fit(x, y,
                             epochs=100,  # waiting callback
-                            callbacks=self.callback,
+                            callbacks=callback,
                             verbose=0,
                             )
-        data_p = self.forecaster.predict(X)  # n_rows-n_steps
+        data_p = self.forecaster.predict(x)  # n_rows-n_steps
         errors = pd.DataFrame(index=data.index[self.n_steps:],
                               columns=data.columns,
                               data=data_s[self.n_steps:] - data_p,
@@ -522,8 +636,8 @@ class DeepPredictWatchman(Watchman):
                  ) -> pd.DataFrame:
         # predict and check errors: one sample by n previous samples
         data_s = self.scaler.transform(data)
-        X, y = self._split_data(data_s)
-        data_p = self.forecaster.predict(X)
+        x, y = self._split_data(data_s)
+        data_p = self.forecaster.predict(x)
         errors = pd.DataFrame(index=data.index[self.n_steps:],
                               columns=data.columns,
                               data=data_s[self.n_steps:] - data_p,
@@ -542,3 +656,27 @@ class DeepPredictWatchman(Watchman):
         result['pmse'] = 0
         result.iloc[self.n_steps:, -1] = (pmse > self.limits['pmse'] * (1 + tolerance)).astype('uint8')
         return result
+
+    def _dump(self, instance_subdir: str):
+        pickle_specific = os.path.join(instance_subdir, f'specific.pickle')
+        with open(pickle_specific, 'wb') as f:
+            pickle.dump(self.scaler, f)
+            pickle.dump(self.n_steps, f)
+            pickle.dump(self.n_units, f)
+        tf_specific = os.path.join(instance_subdir, f'forecaster.hdf5')
+        self.forecaster.save(tf_specific)
+        return
+
+    def _load(self, instance_subdir: str):
+        pickle_specific = os.path.join(instance_subdir, f'specific.pickle')
+        if not os.path.isfile(pickle_specific):
+            raise WatchmanError(f'Unavailable file {pickle_specific}')
+        with open(pickle_specific, 'rb') as f:
+            self.scaler = pickle.load(f)
+            self.n_steps = pickle.load(f)
+            self.n_units = pickle.load(f)
+        tf_specific = os.path.join(instance_subdir, f'forecaster.hdf5')
+        if not os.path.isfile(tf_specific):
+            raise WatchmanError(f'Unavailable file {tf_specific}')
+        self.forecaster = keras.models.load_model(tf_specific)
+        return
