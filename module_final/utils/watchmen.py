@@ -8,6 +8,10 @@ from sklearn.ensemble import IsolationForest
 from sklearn.linear_model import SGDRegressor
 from sklearn.preprocessing import StandardScaler
 
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, LSTM
+from tensorflow.keras.callbacks import EarlyStopping
+
 
 class WatchmanError(ValueError):
     pass
@@ -429,4 +433,112 @@ class LinearPredictWatchman(Watchman):
         result.iloc[1:] = ((errors < limits_lo) | (errors > limits_hi)).astype('uint8')
         result['pmse'] = 0
         result.iloc[1:, -1] = (pmse > self.limits['pmse'] * (1 + tolerance)).astype('uint8')
+        return result
+
+
+class DeepPredictWatchman(Watchman):
+    # using RNN (LSTM) for predict next value and calc limits of error
+
+    def _init(self,
+              n_steps: int = 8,
+              n_units: int = 128,
+              **kwargs):
+        self.scaler = StandardScaler()
+        self.forecaster = None
+        self.callback = None
+        assert n_steps > 0, 'Number of steps must be greater than zero'
+        self.n_steps = n_steps
+        assert n_units > 0, 'Number of units must be greater than zero'
+        self.n_units = n_units
+        return
+
+    def _prefit(self,
+                data: pd.DataFrame,
+                **kwargs,
+                ) -> None:
+        if not self.forecaster:
+            n_features = data.shape[1]
+            self.forecaster = Sequential()
+            self.forecaster.add(LSTM(self.n_units, activation='relu',
+                                     return_sequences=True,
+                                     input_shape=(self.n_steps, n_features)))
+            self.forecaster.add(LSTM(self.n_units, activation='relu'))
+            self.forecaster.add(Dense(n_features))
+            self.forecaster.compile(optimizer='adam', loss='mse')
+            self.callback = EarlyStopping(monitor='loss',
+                                          patience=3,
+                                          min_delta=0.01,
+                                          restore_best_weights=True,
+                                          verbose=0,
+                                          )
+        self.scaler.partial_fit(data)
+        return
+
+    def _split_data(self, data: np.array) -> tuple:
+        # split data to features and target
+        X = list()
+        y = list()
+        for i_stt in range(data.shape[0] - self.n_steps):
+            i_stp = i_stt + self.n_steps
+            X.append(data[i_stt:i_stp])
+            y.append(data[i_stp])
+        return np.array(X), np.array(y)
+
+    def _partial_fit(self,
+                     data: pd.DataFrame,
+                     **kwargs,
+                     ) -> None:
+        # predict and store errors: one sample by n previous samples
+        data_s = self.scaler.transform(data)  # n_rows
+        X, y = self._split_data(data_s)  # n_rows-n_steps
+        self.forecaster.fit(X, y,
+                            epochs=100,  # waiting callback
+                            callbacks=self.callback,
+                            verbose=0,
+                            )
+        data_p = self.forecaster.predict(X)  # n_rows-n_steps
+        errors = pd.DataFrame(index=data.index[self.n_steps:],
+                              columns=data.columns,
+                              data=data_s[self.n_steps:] - data_p,
+                              )
+        errors_min = errors.min()
+        errors_max = errors.max()
+        pmse_max = (errors ** 2).mean(axis=1).max()
+        if self.limits:
+            self.limits['lo'] = self.limits['lo'].combine(errors_min, min)
+            self.limits['hi'] = self.limits['hi'].combine(errors_max, max)
+            self.limits['pmse'] = max(self.limits['pmse'], pmse_max)
+        else:
+            # initialize empty dict by min and max features
+            self.limits['lo'] = errors_min
+            self.limits['hi'] = errors_max
+            self.limits['pmse'] = pmse_max
+        return
+
+    def _predict(self,
+                 data: pd.DataFrame,
+                 tolerance: float = 0.02,
+                 **kwargs,
+                 ) -> pd.DataFrame:
+        # predict and check errors: one sample by n previous samples
+        data_s = self.scaler.transform(data)
+        X, y = self._split_data(data_s)
+        data_p = self.forecaster.predict(X)
+        errors = pd.DataFrame(index=data.index[self.n_steps:],
+                              columns=data.columns,
+                              data=data_s[self.n_steps:] - data_p,
+                              )
+        pmse = (errors ** 2).mean(axis=1)
+        result = pd.DataFrame(index=data.index,
+                              columns=data.columns,
+                              data=0,
+                              dtype='uint8',
+                              )
+        limits_center = (self.limits['hi'] + self.limits['lo']) / 2
+        limits_scope = (self.limits['hi'] - self.limits['lo']) / 2
+        limits_hi = limits_center + limits_scope * (1 + tolerance)
+        limits_lo = limits_center - limits_scope * (1 + tolerance)
+        result.iloc[self.n_steps:] = ((errors < limits_lo) | (errors > limits_hi)).astype('uint8')
+        result['pmse'] = 0
+        result.iloc[self.n_steps:, -1] = (pmse > self.limits['pmse'] * (1 + tolerance)).astype('uint8')
         return result
