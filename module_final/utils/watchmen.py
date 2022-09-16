@@ -331,7 +331,7 @@ class IsoForestWatchman(Watchman):
               window_sparsity: float = 0.5,
               window_overlap: float = 0.1,
               max_trees: int = 100,
-              use_predict: bool = False,
+              use_predict: bool = True,
               **kwargs):
         self.forest = IsolationForest(
             n_estimators=0,
@@ -722,4 +722,87 @@ class DeepPredictWatchman(Watchman):
         if not os.path.isfile(tf_specific):
             raise WatchmanError(f'Unavailable file {tf_specific}')
         self.forecaster = keras.models.load_model(tf_specific)
+        return
+
+
+class WatchSquad:
+    # watchmen's voting
+    pickle_subdir = 'storage'  # subdirectory for pickle watchman
+
+    def __init__(self,
+                 random_state: Optional[int] = None,
+                 threshold: int = 3,
+                 **kwargs,
+                 ):
+        assert threshold >= 1, 'Threshold must be greater than zero.'
+        self.threshold = threshold
+        self.watchmen = (
+            DirectLimitWatchman(random_state=random_state),
+            PcaLimitWatchman(random_state=random_state),
+            IsoForestWatchman(random_state=random_state),
+            LinearPredictWatchman(random_state=random_state),
+            DeepPredictWatchman(random_state=random_state),
+        )
+        return
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}(n_watchmen={len(self.watchmen)})'
+
+    def _check_compliance(self,
+                          data_batch: pd.DataFrame,
+                          ) -> None:
+        if self.data_dtypes.empty:
+            self.data_dtypes = data_batch.dtypes
+            return
+        if not data_batch.dtypes.equals(self.data_dtypes):
+            raise WatchmanError('Batch is not correspond previous data')
+        return
+
+    def prefit(self,
+               data_batch: pd.DataFrame,
+               **kwargs,
+               ) -> None:
+        self._check_compliance(data_batch)
+        for watchman in self.watchmen:
+            watchman.prefit(data_batch, **kwargs)
+        return
+
+    def fit(self,
+            data_batch: pd.DataFrame,
+            **kwargs,
+            ) -> None:
+        self._check_compliance(data_batch)
+        for watchman in self.watchmen:
+            watchman.fit(data_batch, **kwargs)
+        return
+
+    def postfit(self,
+                data_batch: pd.DataFrame,
+                **kwargs,
+                ) -> None:
+        self._check_compliance(data_batch)
+        for watchman in self.watchmen:
+            watchman.postfit(data_batch, **kwargs)
+        return
+
+    def predict(self,
+                data_batch: pd.DataFrame,
+                reduce: bool = True,
+                **kwargs,
+                ) -> Union[pd.DataFrame, pd.Series]:
+        self._check_compliance(data_batch)
+        votes = [watchman.predict(data_batch, **kwargs) for watchman in self.watchmen]
+        result = pd.concat(votes, axis=1)
+        if reduce:
+            result = (result.sum(axis=1) >= self.threshold).astype('uint8')
+        return result
+
+    def dump(self, instance_name: str) -> None:
+        for watchman in self.watchmen:
+            watchman.dump(instance_name)
+        return
+
+    def load(self, instance_name: str) -> None:
+        for watchman in self.watchmen:
+            watchman.load(instance_name)
         return
