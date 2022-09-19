@@ -21,7 +21,7 @@ class WatchmanError(ValueError):
 
 class Watchman:
     # root class of Watchmen
-    pickle_subdir = 'storage'  # subdirectory for pickle watchman
+    pickle_subdir = 'watchmen'  # subdirectory for pickle watchman
 
     def _init(self, **kwargs):
         # self.scaler = StandardScaler()  # transform data in same dimension
@@ -113,15 +113,30 @@ class Watchman:
 
     def predict(self,
                 data_batch: pd.DataFrame,
-                reduce: bool = False,
+                reduce: Optional[Union[str, int]] = None,
                 **kwargs,
                 ) -> Union[pd.DataFrame, pd.Series]:
         # predict anomalies on new data
         self._check_compliance(data_batch)
         result = self._predict(data_batch, **kwargs)
         if reduce:
-            result = result.any(axis=1)
+            result = self._reduce(result, reduce)
         return result
+
+    @staticmethod
+    def _reduce(data: pd.DataFrame,
+                reduce: Union[str, int],
+                ) -> pd.Series:
+        result = None
+        if isinstance(reduce, int) and reduce > 0:
+            result = (data.sum(axis=1) >= reduce)
+        elif reduce == 'any':
+            result = data.any(axis=1)
+        elif reduce == 'all':
+            result = data.all(axis=1)
+        else:
+            WatchmanError(f'Invalid value of reduce {reduce}')
+        return result.astype('uint8')
 
     def _dump(self, instance_subdir: str):
         # dump scaler, transformer etc.
@@ -726,16 +741,14 @@ class DeepPredictWatchman(Watchman):
 
 
 class WatchSquad:
-    # watchmen's voting
-    pickle_subdir = 'storage'  # subdirectory for pickle watchman
+    # watchmen's vote
+    pickle_subdir = 'watchsquad'  # subdirectory for pickle watchman
 
     def __init__(self,
                  random_state: Optional[int] = None,
-                 threshold: int = 3,
                  **kwargs,
                  ):
-        assert threshold >= 1, 'Threshold must be greater than zero.'
-        self.threshold = threshold
+        self.data_dtypes = pd.Series(dtype='object')
         self.watchmen = (
             DirectLimitWatchman(random_state=random_state),
             PcaLimitWatchman(random_state=random_state),
@@ -787,15 +800,30 @@ class WatchSquad:
 
     def predict(self,
                 data_batch: pd.DataFrame,
-                reduce: bool = True,
+                reduce: Optional[Union[str, int]] = 4,
                 **kwargs,
                 ) -> Union[pd.DataFrame, pd.Series]:
         self._check_compliance(data_batch)
         votes = [watchman.predict(data_batch, **kwargs) for watchman in self.watchmen]
         result = pd.concat(votes, axis=1)
         if reduce:
-            result = (result.sum(axis=1) >= self.threshold).astype('uint8')
+            result = self._reduce(result, reduce)
         return result
+
+    @staticmethod
+    def _reduce(data: pd.DataFrame,
+                reduce: Union[str, int],
+                ) -> pd.Series:
+        result = None
+        if isinstance(reduce, int) and reduce > 0:
+            result = (data.sum(axis=1) >= reduce)
+        elif reduce == 'any':
+            result = data.any(axis=1)
+        elif reduce == 'all':
+            result = data.all(axis=1)
+        else:
+            WatchmanError(f'Invalid value of reduce {reduce}')
+        return result.astype('uint8')
 
     def dump(self, instance_name: str) -> None:
         for watchman in self.watchmen:
